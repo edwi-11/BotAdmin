@@ -65,18 +65,40 @@ async def check_bot_rights(bot: Bot, chat_id: int) -> PermissionResult:
     return PermissionResult(True)
 
 
+def _has_change_info_permission(member: Optional[ChatMember]) -> bool:
+    """El creador del grupo siempre tiene control total. Un administrador
+    normal solo cuenta como administrador "de verdad" para el bot si el
+    dueño del grupo le dio el permiso 'Cambiar info del grupo'
+    (can_change_info); se usa como requisito mínimo de confianza para
+    poder usar el bot."""
+    if member is None:
+        return False
+    if member.status == ChatMemberStatus.OWNER:
+        return True
+    if member.status == ChatMemberStatus.ADMINISTRATOR:
+        return bool(getattr(member, "can_change_info", False))
+    return False
+
+
 async def is_chat_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
     if is_owner(user_id):
         return True
     member = await get_member(bot, chat_id, user_id)
-    if member is None:
-        return False
-    return member.status in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER)
+    return _has_change_info_permission(member)
 
 
 async def check_executor_is_admin(bot: Bot, chat_id: int, user_id: int) -> PermissionResult:
-    if await is_chat_admin(bot, chat_id, user_id):
+    if is_owner(user_id):
         return PermissionResult(True)
+    member = await get_member(bot, chat_id, user_id)
+    if _has_change_info_permission(member):
+        return PermissionResult(True)
+    if member is not None and member.status == ChatMemberStatus.ADMINISTRATOR:
+        return PermissionResult(
+            False,
+            "Eres administrador del grupo, pero para usar este bot el dueño del grupo "
+            "debe darte el permiso «Cambiar info del grupo» (Change group info).",
+        )
     return PermissionResult(False, "No tienes permisos de administrador para usar este comando.")
 
 
