@@ -23,6 +23,7 @@ from telegram.ext import (
     Application,
     ApplicationBuilder,
     CallbackQueryHandler,
+    ChatMemberHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -31,6 +32,12 @@ from telegram.ext import (
 
 from config import settings
 from database import Database
+from handlers.activation import (
+    activar_command,
+    desactivar_command,
+    group_gate,
+    on_bot_membership_change,
+)
 from handlers.admin import admin_command, unadmin_command
 from handlers.afk import brb_text_trigger, load_afk_cache, track_and_check_afk
 from handlers.cleanup import (
@@ -206,6 +213,17 @@ def build_application() -> Application:
         .post_shutdown(post_shutdown)
         .build()
     )
+
+    # --- Sistema de activación de grupos (solo el owner puede activar) ---
+    # Debe registrarse ANTES (grupo -3) que cualquier otro handler de
+    # comandos, para poder bloquear el update por completo si el grupo no
+    # está activado o el usuario no tiene permisos.
+    application.add_handler(
+        MessageHandler(filters.COMMAND & filters.ChatType.GROUPS, group_gate), group=-3
+    )
+    application.add_handler(ChatMemberHandler(on_bot_membership_change, ChatMemberHandler.MY_CHAT_MEMBER))
+    application.add_handler(CommandHandler("activar", activar_command))
+    application.add_handler(CommandHandler("desactivar", desactivar_command))
 
     # --- Menú de configuración con botones (todo pasa por aquí) ---
     application.add_handler(CommandHandler("start", menu_command))

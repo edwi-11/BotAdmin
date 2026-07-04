@@ -140,6 +140,11 @@ _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("warn_action", "TEXT NOT NULL DEFAULT 'mute'"),
         ("warn_mute_seconds", "INTEGER NOT NULL DEFAULT 3600"),
     ],
+    "known_groups": [
+        # Grupo "activado" por el propietario mediante /activar. Mientras
+        # esté en 0, el bot no responde a ningún comando en ese grupo.
+        ("activated", "INTEGER NOT NULL DEFAULT 0"),
+    ],
 }
 
 
@@ -506,6 +511,30 @@ class Database:
         )
         row = await cursor.fetchone()
         return row["title"] if row else None
+
+    async def is_group_activated(self, group_id: int) -> bool:
+        cursor = await self.conn.execute(
+            "SELECT activated FROM known_groups WHERE group_id = ?", (group_id,)
+        )
+        row = await cursor.fetchone()
+        return bool(row["activated"]) if row else False
+
+    async def set_group_activated(self, group_id: int, title: Optional[str], activated: bool) -> None:
+        """Activa/desactiva el uso del bot en un grupo. Usa upsert por si el
+        grupo aún no tenía fila en known_groups (por ejemplo, el owner activa
+        el grupo antes de que cualquier otro handler lo haya registrado)."""
+        await self.conn.execute(
+            """
+            INSERT INTO known_groups (group_id, title, activated, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(group_id) DO UPDATE SET
+                activated = excluded.activated,
+                title = COALESCE(excluded.title, known_groups.title),
+                updated_at = excluded.updated_at
+            """,
+            (group_id, title, int(activated), int(time.time())),
+        )
+        await self.conn.commit()
 
     # ------------------------------------------------------------------ #
     # Mensajes recurrentes
