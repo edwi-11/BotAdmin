@@ -15,18 +15,27 @@ cuenta que creó el bot en BotFather tiene Telegram Premium: el bot no
 reinterpreta el texto, simplemente reenvía las mismas entidades que llegaron
 en el mensaje original usado para definir el contenido.
 
-Flujo de creación (wizard), iniciado con /addrecurrente dentro de un grupo,
-o desde el menú ⚙️ → 🔁 Mensajes recurrentes → ➕ Agregar:
-    1) El admin envía el contenido (texto o media, con formato/emojis premium
-       si quiere).
-    2) El admin envía los botones (opcional) con la sintaxis:
-           Texto del botón - https://enlace.com
-           Botón A - https://a.com | Botón B - https://b.com
-       o escribe "no" / "ninguno" para omitir.
-    3) Elige el intervalo con botones (10 min ... 24 h).
-    4) Elige si se fija el mensaje.
-    5) Elige si se borra el mensaje anterior de ese recurrente antes de
-       publicar el nuevo.
+--------------------------------------------------------------------------
+EDITOR DE UN SOLO MENÚ (sin wizard mensaje-por-mensaje)
+--------------------------------------------------------------------------
+Desde ⚙️ → 🔁 Mensajes recurrentes → ➕ Agregar (o ✏️ Editar sobre uno ya
+creado) se abre un único panel con un botón por cada campo:
+
+    📷 Multimedia   -> pide una foto/video/GIF/documento/audio/nota de voz
+    📝 Texto        -> pide el texto del mensaje
+    🔘 Botones      -> pide los botones en línea (o "no" para quitarlos)
+    ⏱ Intervalo    -> elige la frecuencia con botones
+    📌 Fijar        -> alterna sí/no
+    🗑 Borrar anterior -> alterna sí/no
+    👁 Vista previa -> envía el mensaje tal cual quedaría, sin guardarlo
+    💾 Guardar      -> crea o actualiza el mensaje recurrente
+    ❌ Descartar    -> cancela sin guardar
+
+Cada botón que necesita texto libre (Multimedia/Texto/Botones) pide el
+dato y, en cuanto el admin lo envía, se vuelve automáticamente al MISMO
+panel (editado en el mismo mensaje), en vez de encadenar preguntas una
+tras otra. El admin puede tocar "👁 Vista previa" en cualquier momento
+para ver exactamente cómo se vería el mensaje antes de guardarlo.
 """
 from __future__ import annotations
 
@@ -40,9 +49,9 @@ from telegram.error import TelegramError
 from telegram.ext import Application, ContextTypes
 
 from database import Database, RecurringMessage
+from utils.callbacks import safe_callback
 from utils.entities import (
     build_inline_keyboard,
-    count_premium_emojis,
     describe_buttons,
     entities_to_json,
     json_to_buttons,
@@ -63,15 +72,17 @@ INTERVAL_OPTIONS: list[tuple[str, int]] = [
     ("24 h", 86400),
 ]
 
-CONTENT_TYPES = ("photo", "video", "animation", "document", "audio", "voice")
+MEDIA_TYPES = ("photo", "video", "animation", "document", "audio", "voice")
+MEDIA_LABELS = {
+    "photo": "Foto", "video": "Video", "animation": "GIF",
+    "document": "Documento", "audio": "Audio", "voice": "Nota de voz",
+}
+
+DEFAULT_INTERVAL_SECONDS = 3600
 
 
 def _get_db(context: ContextTypes.DEFAULT_TYPE) -> Database:
     return context.application.bot_data["db"]
-
-
-async def _reply(update: Update, text: str) -> None:
-    await update.effective_message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
 
 
 def _job_name(rec_id: int) -> str:
@@ -108,6 +119,35 @@ async def load_all_recurring_jobs(application: Application, db: Database) -> Non
         logger.info("Reprogramados %d mensajes recurrentes activos.", len(records))
 
 
+# --------------------------------------------------------------------- #
+# Envío real (usado tanto por el job programado como por "Vista previa")
+# --------------------------------------------------------------------- #
+async def _send_content(
+    context: ContextTypes.DEFAULT_TYPE, chat_id: int, content_type: str,
+    text: Optional[str], entities_json: str, file_id: Optional[str], buttons_json: str,
+) -> Message:
+    entities = json_to_entities(entities_json)
+    markup = build_inline_keyboard(json_to_buttons(buttons_json))
+
+    if content_type == "text":
+        return await context.bot.send_message(chat_id, text or "", entities=entities, reply_markup=markup)
+
+    kwargs = dict(caption=text, caption_entities=entities, reply_markup=markup)
+    if content_type == "photo":
+        return await context.bot.send_photo(chat_id, photo=file_id, **kwargs)
+    if content_type == "video":
+        return await context.bot.send_video(chat_id, video=file_id, **kwargs)
+    if content_type == "animation":
+        return await context.bot.send_animation(chat_id, animation=file_id, **kwargs)
+    if content_type == "document":
+        return await context.bot.send_document(chat_id, document=file_id, **kwargs)
+    if content_type == "audio":
+        return await context.bot.send_audio(chat_id, audio=file_id, **kwargs)
+    if content_type == "voice":
+        return await context.bot.send_voice(chat_id, voice=file_id, **kwargs)
+    raise ValueError(f"Tipo de contenido desconocido: {content_type}")
+
+
 async def _send_recurring(context: ContextTypes.DEFAULT_TYPE, rec_id: int) -> None:
     db: Database = context.application.bot_data["db"]
     rec = await db.get_recurring_message(rec_id)
@@ -121,31 +161,10 @@ async def _send_recurring(context: ContextTypes.DEFAULT_TYPE, rec_id: int) -> No
         except TelegramError:
             pass
 
-    entities = json_to_entities(rec.entities)
-    markup = build_inline_keyboard(json_to_buttons(rec.buttons))
-
     try:
-        if rec.content_type == "text":
-            sent = await context.bot.send_message(
-                chat_id, rec.text or "", entities=entities, reply_markup=markup,
-            )
-        else:
-            kwargs = dict(caption=rec.text, caption_entities=entities, reply_markup=markup)
-            if rec.content_type == "photo":
-                sent = await context.bot.send_photo(chat_id, photo=rec.file_id, **kwargs)
-            elif rec.content_type == "video":
-                sent = await context.bot.send_video(chat_id, video=rec.file_id, **kwargs)
-            elif rec.content_type == "animation":
-                sent = await context.bot.send_animation(chat_id, animation=rec.file_id, **kwargs)
-            elif rec.content_type == "document":
-                sent = await context.bot.send_document(chat_id, document=rec.file_id, **kwargs)
-            elif rec.content_type == "audio":
-                sent = await context.bot.send_audio(chat_id, audio=rec.file_id, **kwargs)
-            elif rec.content_type == "voice":
-                sent = await context.bot.send_voice(chat_id, voice=rec.file_id, **kwargs)
-            else:
-                logger.warning("Tipo de contenido desconocido en recurrente %s: %s", rec_id, rec.content_type)
-                return
+        sent = await _send_content(
+            context, chat_id, rec.content_type, rec.text, rec.entities, rec.file_id, rec.buttons
+        )
     except TelegramError as exc:
         logger.warning("No se pudo enviar el mensaje recurrente %s en %s: %s", rec_id, chat_id, exc)
         return
@@ -187,211 +206,126 @@ def _extract_content(message: Message) -> Optional[tuple[str, Optional[str], str
     return None
 
 
-# --------------------------------------------------------------------- #
-# Comandos
-# --------------------------------------------------------------------- #
-async def _guard_group_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+async def recurring_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat = update.effective_chat
     user = update.effective_user
-    message = update.effective_message
     if chat.type not in ("group", "supergroup"):
-        await message.reply_text(error("Este comando solo funciona en grupos."))
-        return False
-    if not await is_chat_admin(context.bot, chat.id, user.id):
-        await message.reply_text(error("No tienes permisos de administrador para usar este comando."))
-        return False
-    return True
-
-
-async def addrecurring_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard_group_admin(update, context):
+        await update.effective_message.reply_text(error("Este comando solo funciona en grupos."))
         return
-    await start_wizard(update.effective_chat.id, update.effective_chat.id, context)
-
-
-async def recurring_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not await _guard_group_admin(update, context):
+    if not await is_chat_admin(context.bot, chat.id, user.id):
+        await update.effective_message.reply_text(error("No tienes permisos de administrador para usar este comando."))
         return
     db = _get_db(context)
-    text, markup = await _build_list_view(db, update.effective_chat.id)
+    text, markup = await _build_list_view(db, chat.id)
     await update.effective_message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=markup)
 
 
 # --------------------------------------------------------------------- #
-# Wizard: inicio y consumo de texto/media libre
+# Borrador (draft) del editor de un solo menú
 # --------------------------------------------------------------------- #
-async def start_wizard(group_id: int, prompt_chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
-    context.user_data["pending_recurring"] = {"step": "content", "group_id": group_id}
-    await context.bot.send_message(
-        prompt_chat_id,
-        "🔁 *Nuevo mensaje recurrente*\n\n"
-        "Envíame el contenido: puede ser texto \\(con el formato y los "
-        "emojis premium que quieras\\) o una foto/video/GIF/documento/audio "
-        "con su descripción\\.\n\n"
-        "Escribe /cancelar para cancelar\\.",
-        parse_mode=ParseMode.MARKDOWN_V2,
+def _new_draft(group_id: int, rec_id: Optional[int] = None) -> dict:
+    return {
+        "id": rec_id,
+        "group_id": group_id,
+        "content_type": "text",
+        "text": None,
+        "entities_json": "[]",
+        "file_id": None,
+        "buttons_json": "[]",
+        "interval_seconds": DEFAULT_INTERVAL_SECONDS,
+        "pin": False,
+        "delete_previous": False,
+        "awaiting": None,       # "media" | "text" | "buttons" | None
+        "menu_chat_id": None,
+        "menu_message_id": None,
+    }
+
+
+def _draft_from_record(rec: RecurringMessage) -> dict:
+    draft = _new_draft(rec.group_id, rec_id=rec.id)
+    draft.update(
+        content_type=rec.content_type, text=rec.text, entities_json=rec.entities,
+        file_id=rec.file_id, buttons_json=rec.buttons, interval_seconds=rec.interval_seconds,
+        pin=rec.pin, delete_previous=rec.delete_previous,
     )
+    return draft
 
 
-def _build_buttons_prompt_keyboard(group_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("⏭ Sin botones", callback_data=f"r:nobtn:{group_id}")]])
+def _draft_view(draft: dict) -> tuple[str, InlineKeyboardMarkup]:
+    group_id = draft["group_id"]
+    content_type = draft["content_type"]
 
-
-async def try_consume_pending_recurring(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    pending: Optional[dict] = context.user_data.get("pending_recurring")
-    if not pending or pending.get("step") not in ("content", "buttons"):
-        return False
-
-    message = update.effective_message
-    raw_text = (message.text or message.caption or "").strip()
-
-    if raw_text.lower() in ("/cancelar", "cancelar"):
-        context.user_data.pop("pending_recurring", None)
-        await message.reply_text("❌ Creación de mensaje recurrente cancelada.")
-        return True
-
-    step = pending["step"]
-
-    if step == "content":
-        content = _extract_content(message)
-        if content is None:
-            await message.reply_text(
-                error("Envía texto, foto, video, GIF, documento, audio o nota de voz.")
-            )
-            return True
-        content_type, text, entities_json, file_id = content
-        pending.update(
-            content_type=content_type, text=text, entities_json=entities_json, file_id=file_id,
-        )
-        pending["step"] = "buttons"
-
-        premium_note = ""
-        n = count_premium_emojis(json_to_entities(entities_json))
-        if n:
-            premium_note = f"\n✨ Detecté {n} emoji\\(s\\) premium; se conservarán tal cual\\."
-
-        await message.reply_text(
-            "🔘 ¿Quieres agregar botones en línea\\? Envíalos con este formato "
-            "\\(una fila por línea, botones de la misma fila separados por ` | `\\):\n\n"
-            "`Texto del botón - https://enlace.com`\n"
-            "`Botón A - https://a.com | Botón B - https://b.com`\n\n"
-            "O toca el botón de abajo si no quieres botones\\." + premium_note,
-            parse_mode=ParseMode.MARKDOWN_V2,
-            reply_markup=_build_buttons_prompt_keyboard(pending["group_id"]),
-        )
-        return True
-
-    if step == "buttons":
-        if not message.text:
-            await message.reply_text(error("Envía el texto de los botones, o toca «Sin botones»."))
-            return True
-        if raw_text.lower() in ("no", "ninguno", "omitir", "skip"):
-            rows: list[list[dict]] = []
-        else:
-            rows, errors = parse_buttons_text(raw_text)
-            if errors:
-                await message.reply_text(
-                    error("Hay problemas con el formato de los botones:\n- " + "\n- ".join(errors))
-                )
-                return True
-        pending["buttons_json"] = json.dumps(rows, ensure_ascii=False)
-        pending["step"] = "interval"
-        await message.reply_text(
-            f"✅ Botones guardados:\n{escape_md(describe_buttons(rows))}"
-            if rows else "✅ Sin botones.",
-            parse_mode=ParseMode.MARKDOWN_V2 if rows else None,
-        )
-        await _ask_interval(update.effective_chat.id, pending["group_id"], context)
-        return True
-
-    return False
-
-
-async def _ask_interval(prompt_chat_id: int, group_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
-    rows = []
-    row: list[InlineKeyboardButton] = []
-    for label, seconds in INTERVAL_OPTIONS:
-        row.append(InlineKeyboardButton(label, callback_data=f"r:int:{group_id}:{seconds}"))
-        if len(row) == 3:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    await context.bot.send_message(
-        prompt_chat_id,
-        "⏱ ¿Cada cuánto quieres que se envíe este mensaje?",
-        reply_markup=InlineKeyboardMarkup(rows),
-    )
-
-
-def _yesno_keyboard(prefix: str, group_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Sí", callback_data=f"r:{prefix}:{group_id}:1"),
-        InlineKeyboardButton("❌ No", callback_data=f"r:{prefix}:{group_id}:0"),
-    ]])
-
-
-# --------------------------------------------------------------------- #
-# Vistas de lista / detalle
-# --------------------------------------------------------------------- #
-def _summary_line(index: int, rec: RecurringMessage) -> str:
-    status = "🟢" if rec.enabled else "🔴"
-    kind = {"text": "📝", "photo": "🖼", "video": "🎬", "animation": "🎞",
-            "document": "📄", "audio": "🎵", "voice": "🎙"}.get(rec.content_type, "📦")
-    return f"{status} `#{index}` {kind} cada {escape_md(humanize_seconds(rec.interval_seconds))}"
-
-
-async def _build_list_view(db: Database, group_id: int) -> tuple[str, InlineKeyboardMarkup]:
-    records = await db.get_recurring_messages(group_id)
-    if not records:
-        text = (
-            "🔁 *Mensajes recurrentes*\n\n"
-            "Aún no hay ninguno configurado en este grupo\\."
-        )
-        rows = [[InlineKeyboardButton("➕ Agregar", callback_data=f"r:add:{group_id}")]]
+    if content_type == "text":
+        media_status = "No definida"
     else:
-        lines = ["🔁 *Mensajes recurrentes*", ""]
-        rows = []
-        for i, rec in enumerate(records, start=1):
-            lines.append(_summary_line(i, rec))
-            rows.append([InlineKeyboardButton(f"⚙️ #{i}", callback_data=f"r:view:{rec.id}")])
-        rows.append([InlineKeyboardButton("➕ Agregar", callback_data=f"r:add:{group_id}")])
-        text = "\n".join(lines)
-    rows.append([InlineKeyboardButton("🔙 Volver", callback_data=f"m:main:{group_id}")])
-    return text, InlineKeyboardMarkup(rows)
+        media_status = f"Sí ({MEDIA_LABELS.get(content_type, content_type)})"
 
+    if content_type == "text":
+        text_status = "Definido" if draft.get("text") else "No definido"
+    else:
+        text_status = "Con descripción" if draft.get("text") else "Sin descripción"
 
-async def _build_detail_view(db: Database, rec: RecurringMessage) -> tuple[str, InlineKeyboardMarkup]:
-    buttons_desc = describe_buttons(json_to_buttons(rec.buttons))
-    text = (
-        f"🔁 *Mensaje recurrente \\#{rec.id}*\n\n"
-        f"Estado: {'🟢 Activado' if rec.enabled else '🔴 Desactivado'}\n"
-        f"Tipo: `{escape_md(rec.content_type)}`\n"
-        f"Intervalo: {escape_md(humanize_seconds(rec.interval_seconds))}\n"
-        f"📌 Fijar mensaje: {'Sí' if rec.pin else 'No'}\n"
-        f"🗑 Borrar el anterior: {'Sí' if rec.delete_previous else 'No'}\n"
-        f"🔘 Botones:\n{escape_md(buttons_desc)}"
-    )
+    buttons_desc = describe_buttons(json_to_buttons(draft["buttons_json"]))
+    interval_label = humanize_seconds(draft["interval_seconds"])
+
+    lines = [
+        "🔁 *Editor de mensaje recurrente*",
+        "",
+        "Configura cada parte con los botones de abajo y usa "
+        "*👁 Vista previa* para ver cómo quedará antes de guardar\\.",
+        "",
+        f"📷 Multimedia: *{escape_md(media_status)}*",
+        f"📝 Texto: *{escape_md(text_status)}*",
+        f"🔘 Botones:\n{escape_md(buttons_desc)}",
+        f"⏱ Intervalo: *{escape_md(interval_label)}*",
+        f"📌 Fijar mensaje: *{'Sí' if draft['pin'] else 'No'}*",
+        f"🗑 Borrar el anterior: *{'Sí' if draft['delete_previous'] else 'No'}*",
+    ]
+    text = "\n".join(lines)
+
     rows = [
-        [InlineKeyboardButton(
-            "⏸ Pausar" if rec.enabled else "▶️ Activar", callback_data=f"r:toggle:{rec.id}"
-        )],
-        [InlineKeyboardButton(
-            f"📌 Fijar: {'Sí' if rec.pin else 'No'}", callback_data=f"r:togpin:{rec.id}"
-        )],
-        [InlineKeyboardButton(
-            f"🗑 Borrar anterior: {'Sí' if rec.delete_previous else 'No'}",
-            callback_data=f"r:togdel:{rec.id}",
-        )],
-        [InlineKeyboardButton("❌ Eliminar definitivamente", callback_data=f"r:delask:{rec.id}")],
-        [InlineKeyboardButton("🔙 Volver a la lista", callback_data=f"r:list:{rec.group_id}")],
+        [InlineKeyboardButton(f"📷 Multimedia: {media_status}", callback_data=f"r:draftmedia:{group_id}")],
+        [InlineKeyboardButton(f"📝 Texto: {text_status}", callback_data=f"r:drafttext:{group_id}")],
+        [InlineKeyboardButton("🔘 Botones", callback_data=f"r:draftbtns:{group_id}")],
+        [InlineKeyboardButton(f"⏱ Intervalo: {interval_label}", callback_data=f"r:draftint:{group_id}")],
+        [
+            InlineKeyboardButton(f"📌 Fijar: {'Sí' if draft['pin'] else 'No'}", callback_data=f"r:draftpin:{group_id}"),
+            InlineKeyboardButton(f"🗑 Anterior: {'Sí' if draft['delete_previous'] else 'No'}", callback_data=f"r:draftdel:{group_id}"),
+        ],
+        [InlineKeyboardButton("👁 Vista previa", callback_data=f"r:draftpreview:{group_id}")],
+        [
+            InlineKeyboardButton("💾 Guardar", callback_data=f"r:draftsave:{group_id}"),
+            InlineKeyboardButton("❌ Descartar", callback_data=f"r:draftcancel:{group_id}"),
+        ],
     ]
     return text, InlineKeyboardMarkup(rows)
+
+
+async def _render_draft(context: ContextTypes.DEFAULT_TYPE, draft: dict) -> None:
+    """Muestra (o vuelve a mostrar) el panel del editor en el mismo mensaje."""
+    text, markup = _draft_view(draft)
+    chat_id = draft["menu_chat_id"]
+    message_id = draft["menu_message_id"]
+    try:
+        await context.bot.edit_message_text(
+            chat_id=chat_id, message_id=message_id, text=text,
+            parse_mode=ParseMode.MARKDOWN_V2, reply_markup=markup,
+        )
+    except TelegramError as exc:
+        logger.warning("No pude editar el editor de recurrente, mando uno nuevo: %s", exc)
+        sent = await context.bot.send_message(chat_id, text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=markup)
+        draft["menu_chat_id"] = sent.chat_id
+        draft["menu_message_id"] = sent.message_id
+
+
+def _cancel_field_keyboard(group_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Volver al editor", callback_data=f"r:draftback:{group_id}")]])
 
 
 # --------------------------------------------------------------------- #
 # Callback dispatcher (pattern "^r:")
 # --------------------------------------------------------------------- #
+@safe_callback
 async def recurring_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     data = query.data or ""
@@ -405,7 +339,7 @@ async def recurring_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user = update.effective_user
 
     # --- Acciones sobre un mensaje recurrente ya existente (usan el id) ---
-    if action in ("view", "toggle", "togpin", "togdel", "delask", "deldo"):
+    if action in ("view", "toggle", "togpin", "togdel", "delask", "deldo", "edit"):
         rec_id = int(parts[2])
         rec = await db.get_recurring_message(rec_id)
         if rec is None:
@@ -418,6 +352,15 @@ async def recurring_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if action == "view":
             text, markup = await _build_detail_view(db, rec)
             await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=markup)
+            await query.answer()
+            return
+
+        if action == "edit":
+            draft = _draft_from_record(rec)
+            draft["menu_chat_id"] = query.message.chat_id
+            draft["menu_message_id"] = query.message.message_id
+            context.user_data["draft_recurring"] = draft
+            await _render_draft(context, draft)
             await query.answer()
             return
 
@@ -471,7 +414,7 @@ async def recurring_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await query.answer("Eliminado.")
             return
 
-    # --- Acciones que usan group_id (lista, agregar, wizard) ---
+    # --- Acciones que usan group_id (lista, agregar, editor) ---
     if not parts[2].lstrip("-").isdigit():
         await query.answer()
         return
@@ -482,97 +425,308 @@ async def recurring_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     if action == "list":
+        context.user_data.pop("draft_recurring", None)
         text, markup = await _build_list_view(db, group_id)
         await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=markup)
         await query.answer()
         return
 
     if action == "add":
+        draft = _new_draft(group_id)
+        draft["menu_chat_id"] = query.message.chat_id
+        draft["menu_message_id"] = query.message.message_id
+        context.user_data["draft_recurring"] = draft
+        await _render_draft(context, draft)
         await query.answer()
+        return
+
+    # A partir de aquí, todas las acciones operan sobre el borrador activo.
+    draft: Optional[dict] = context.user_data.get("draft_recurring")
+    if not draft or draft.get("group_id") != group_id:
+        await query.answer("Este editor ya expiró, ábrelo de nuevo desde el menú.", show_alert=True)
+        return
+
+    if action == "draftback":
+        draft["awaiting"] = None
+        await _render_draft(context, draft)
+        await query.answer()
+        return
+
+    if action == "draftmedia":
+        draft["awaiting"] = "media"
         await query.edit_message_text(
-            "🔁 Revisa tus mensajes privados con el bot \\(o este chat\\) para continuar\\.",
+            "📷 Envía la foto, video, GIF, documento, audio o nota de voz "
+            "\\(puedes incluirle una descripción/caption\\)\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
-        )
-        await start_wizard(group_id, query.message.chat_id, context)
-        return
-
-    if action == "nobtn":
-        pending = context.user_data.get("pending_recurring")
-        if not pending or pending.get("group_id") != group_id:
-            await query.answer()
-            return
-        pending["buttons_json"] = "[]"
-        pending["step"] = "interval"
-        await query.edit_message_text("✅ Sin botones.")
-        await query.answer()
-        await _ask_interval(query.message.chat_id, group_id, context)
-        return
-
-    if action == "int":
-        seconds = int(parts[3])
-        pending = context.user_data.get("pending_recurring")
-        if not pending or pending.get("group_id") != group_id:
-            await query.answer("Esta configuración ya expiró, usa /addrecurrente de nuevo.", show_alert=True)
-            return
-        pending["interval_seconds"] = seconds
-        pending["step"] = "pin"
-        await query.edit_message_text(
-            f"⏱ Intervalo: cada {humanize_seconds(seconds)}.\n\n📌 ¿Quieres fijar (pin) este mensaje al enviarse?"
+            reply_markup=_cancel_field_keyboard(group_id),
         )
         await query.answer()
-        await context.bot.send_message(
-            query.message.chat_id, "Elige una opción:", reply_markup=_yesno_keyboard("pinsel", group_id)
-        )
         return
 
-    if action == "pinsel":
-        value = bool(int(parts[3]))
-        pending = context.user_data.get("pending_recurring")
-        if not pending or pending.get("group_id") != group_id:
-            await query.answer("Esta configuración ya expiró, usa /addrecurrente de nuevo.", show_alert=True)
-            return
-        pending["pin"] = value
-        pending["step"] = "delprev"
+    if action == "drafttext":
+        draft["awaiting"] = "text"
         await query.edit_message_text(
-            f"📌 Fijar: {'Sí' if value else 'No'}.\n\n"
-            "🗑 ¿Quieres que el bot borre el mensaje anterior de este recurrente antes de publicar el nuevo?"
+            "📝 Envía el texto del mensaje \\(puedes usar el formato y los emojis "
+            "premium que quieras\\)\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+            reply_markup=_cancel_field_keyboard(group_id),
         )
         await query.answer()
-        await context.bot.send_message(
-            query.message.chat_id, "Elige una opción:", reply_markup=_yesno_keyboard("delprevsel", group_id)
-        )
         return
 
-    if action == "delprevsel":
-        value = bool(int(parts[3]))
-        pending = context.user_data.get("pending_recurring")
-        if not pending or pending.get("group_id") != group_id:
-            await query.answer("Esta configuración ya expiró, usa /addrecurrente de nuevo.", show_alert=True)
+    if action == "draftbtns":
+        draft["awaiting"] = "buttons"
+        await query.edit_message_text(
+            "🔘 Envía los botones en línea con este formato "
+            "\\(una fila por línea, botones de la misma fila separados por ` | `\\):\n\n"
+            "`Texto del botón - https://enlace.com`\n"
+            "`Botón A - https://a.com | Botón B - https://b.com`\n\n"
+            "O envía `no` para quitar los botones\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+            reply_markup=_cancel_field_keyboard(group_id),
+        )
+        await query.answer()
+        return
+
+    if action == "draftint":
+        rows = []
+        row = []
+        for label, seconds in INTERVAL_OPTIONS:
+            row.append(InlineKeyboardButton(label, callback_data=f"r:draftsetint:{group_id}:{seconds}"))
+            if len(row) == 3:
+                rows.append(row)
+                row = []
+        if row:
+            rows.append(row)
+        rows.append([InlineKeyboardButton("🔙 Volver al editor", callback_data=f"r:draftback:{group_id}")])
+        await query.edit_message_text(
+            "⏱ ¿Cada cuánto quieres que se envíe este mensaje?",
+            reply_markup=InlineKeyboardMarkup(rows),
+        )
+        await query.answer()
+        return
+
+    if action == "draftsetint":
+        draft["interval_seconds"] = int(parts[3])
+        await _render_draft(context, draft)
+        await query.answer("Intervalo actualizado.")
+        return
+
+    if action == "draftpin":
+        draft["pin"] = not draft["pin"]
+        await _render_draft(context, draft)
+        await query.answer()
+        return
+
+    if action == "draftdel":
+        draft["delete_previous"] = not draft["delete_previous"]
+        await _render_draft(context, draft)
+        await query.answer()
+        return
+
+    if action == "draftpreview":
+        has_content = (draft["content_type"] == "text" and draft.get("text")) or \
+                      (draft["content_type"] != "text" and draft.get("file_id"))
+        if not has_content:
+            await query.answer("Primero define un texto o una foto/video.", show_alert=True)
+            return
+        try:
+            await context.bot.send_message(
+                draft["menu_chat_id"], "👁 *Vista previa* — así se vería el mensaje:",
+                parse_mode=ParseMode.MARKDOWN_V2,
+            )
+            await _send_content(
+                context, draft["menu_chat_id"], draft["content_type"], draft.get("text"),
+                draft["entities_json"], draft.get("file_id"), draft["buttons_json"],
+            )
+        except TelegramError as exc:
+            await query.answer(f"No pude enviar la vista previa: {exc}", show_alert=True)
+            return
+        await query.answer()
+        return
+
+    if action == "draftsave":
+        has_content = (draft["content_type"] == "text" and draft.get("text")) or \
+                      (draft["content_type"] != "text" and draft.get("file_id"))
+        if not has_content:
+            await query.answer("Primero define un texto o una foto/video antes de guardar.", show_alert=True)
             return
 
-        rec_id = await db.add_recurring_message(
-            group_id=group_id,
-            content_type=pending["content_type"],
-            text=pending.get("text"),
-            entities=pending.get("entities_json", "[]"),
-            file_id=pending.get("file_id"),
-            buttons=pending.get("buttons_json", "[]"),
-            interval_seconds=pending["interval_seconds"],
-            pin=pending["pin"],
-            delete_previous=value,
-            created_by=user.id,
-        )
-        schedule_recurring_job(context.application, rec_id, pending["interval_seconds"])
-        context.user_data.pop("pending_recurring", None)
+        if draft["id"] is None:
+            rec_id = await db.add_recurring_message(
+                group_id=group_id,
+                content_type=draft["content_type"],
+                text=draft.get("text"),
+                entities=draft["entities_json"],
+                file_id=draft.get("file_id"),
+                buttons=draft["buttons_json"],
+                interval_seconds=draft["interval_seconds"],
+                pin=draft["pin"],
+                delete_previous=draft["delete_previous"],
+                created_by=user.id,
+            )
+            confirmation = f"Mensaje recurrente #{rec_id} creado y activado."
+        else:
+            rec_id = draft["id"]
+            await db.update_recurring_message(
+                rec_id,
+                content_type=draft["content_type"],
+                text=draft.get("text"),
+                entities=draft["entities_json"],
+                file_id=draft.get("file_id"),
+                buttons=draft["buttons_json"],
+                interval_seconds=draft["interval_seconds"],
+                pin=draft["pin"],
+                delete_previous=draft["delete_previous"],
+            )
+            confirmation = f"Mensaje recurrente #{rec_id} actualizado."
 
-        await query.edit_message_text(
-            success(f"Mensaje recurrente #{rec_id} creado y activado.")
-        )
-        await query.answer("¡Listo!")
+        schedule_recurring_job(context.application, rec_id, draft["interval_seconds"])
+        context.user_data.pop("draft_recurring", None)
+
         text, markup = await _build_list_view(db, group_id)
-        await context.bot.send_message(
-            query.message.chat_id, text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=markup,
-        )
+        try:
+            await context.bot.edit_message_text(
+                chat_id=draft["menu_chat_id"], message_id=draft["menu_message_id"],
+                text=f"{success(confirmation)}\n\n{text}", parse_mode=ParseMode.MARKDOWN_V2,
+                reply_markup=markup,
+            )
+        except TelegramError:
+            await context.bot.send_message(
+                draft["menu_chat_id"], text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=markup
+            )
+        await query.answer("¡Guardado!")
+        return
+
+    if action == "draftcancel":
+        rec_id = draft.get("id")
+        context.user_data.pop("draft_recurring", None)
+        if rec_id is not None:
+            rec = await db.get_recurring_message(rec_id)
+            if rec is not None:
+                text, markup = await _build_detail_view(db, rec)
+                await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=markup)
+                await query.answer("Cambios descartados.")
+                return
+        text, markup = await _build_list_view(db, group_id)
+        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=markup)
+        await query.answer("Descartado.")
         return
 
     await query.answer()
+
+
+# --------------------------------------------------------------------- #
+# Consumo de texto/media libre cuando el editor está esperando un campo
+# --------------------------------------------------------------------- #
+async def try_consume_draft_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    draft: Optional[dict] = context.user_data.get("draft_recurring")
+    if not draft or not draft.get("awaiting"):
+        return False
+
+    message = update.effective_message
+    awaiting = draft["awaiting"]
+
+    if awaiting == "media":
+        content = _extract_content(message)
+        if content is None or content[0] == "text":
+            await message.reply_text(
+                error("Envía una foto, video, GIF, documento, audio o nota de voz."),
+            )
+            return True
+        content_type, text, entities_json, file_id = content
+        draft.update(content_type=content_type, text=text, entities_json=entities_json, file_id=file_id)
+
+    elif awaiting == "text":
+        if not message.text:
+            await message.reply_text(error("Envía el texto del mensaje (no una foto/video)."))
+            return True
+        draft["text"] = message.text
+        # Si ya había una foto/video configurada, el texto se usa como su
+        # descripción (caption); si no, es el mensaje de texto completo.
+        if draft["content_type"] == "text":
+            draft["entities_json"] = entities_to_json(message.entities)
+        else:
+            draft["entities_json"] = entities_to_json(message.caption_entities or message.entities)
+
+    elif awaiting == "buttons":
+        raw_text = (message.text or "").strip()
+        if not raw_text:
+            await message.reply_text(error("Envía el texto de los botones, o `no` para quitarlos."))
+            return True
+        if raw_text.lower() in ("no", "ninguno", "omitir", "skip"):
+            rows: list[list[dict]] = []
+        else:
+            rows, errors = parse_buttons_text(raw_text)
+            if errors:
+                await message.reply_text(
+                    error("Hay problemas con el formato de los botones:\n- " + "\n- ".join(errors))
+                )
+                return True
+        draft["buttons_json"] = json.dumps(rows, ensure_ascii=False)
+
+    else:
+        return False
+
+    draft["awaiting"] = None
+    await _render_draft(context, draft)
+    return True
+
+
+# --------------------------------------------------------------------- #
+# Vistas de lista / detalle
+# --------------------------------------------------------------------- #
+def _summary_line(index: int, rec: RecurringMessage) -> str:
+    status = "🟢" if rec.enabled else "🔴"
+    kind = {"text": "📝", "photo": "🖼", "video": "🎬", "animation": "🎞",
+            "document": "📄", "audio": "🎵", "voice": "🎙"}.get(rec.content_type, "📦")
+    return f"{status} `#{index}` {kind} cada {escape_md(humanize_seconds(rec.interval_seconds))}"
+
+
+async def _build_list_view(db: Database, group_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    records = await db.get_recurring_messages(group_id)
+    if not records:
+        text = (
+            "🔁 *Mensajes recurrentes*\n\n"
+            "Aún no hay ninguno configurado en este grupo\\."
+        )
+        rows = [[InlineKeyboardButton("➕ Agregar", callback_data=f"r:add:{group_id}")]]
+    else:
+        lines = ["🔁 *Mensajes recurrentes*", ""]
+        rows = []
+        for i, rec in enumerate(records, start=1):
+            lines.append(_summary_line(i, rec))
+            rows.append([InlineKeyboardButton(f"⚙️ #{i}", callback_data=f"r:view:{rec.id}")])
+        rows.append([InlineKeyboardButton("➕ Agregar", callback_data=f"r:add:{group_id}")])
+        text = "\n".join(lines)
+    rows.append([InlineKeyboardButton("🔙 Volver", callback_data=f"m:main:{group_id}")])
+    return text, InlineKeyboardMarkup(rows)
+
+
+async def _build_detail_view(db: Database, rec: RecurringMessage) -> tuple[str, InlineKeyboardMarkup]:
+    buttons_desc = describe_buttons(json_to_buttons(rec.buttons))
+    text = (
+        f"🔁 *Mensaje recurrente \\#{rec.id}*\n\n"
+        f"Estado: {'🟢 Activado' if rec.enabled else '🔴 Desactivado'}\n"
+        f"Tipo: `{escape_md(rec.content_type)}`\n"
+        f"Intervalo: {escape_md(humanize_seconds(rec.interval_seconds))}\n"
+        f"📌 Fijar mensaje: {'Sí' if rec.pin else 'No'}\n"
+        f"🗑 Borrar el anterior: {'Sí' if rec.delete_previous else 'No'}\n"
+        f"🔘 Botones:\n{escape_md(buttons_desc)}"
+    )
+    rows = [
+        [InlineKeyboardButton("✏️ Editar contenido", callback_data=f"r:edit:{rec.id}")],
+        [InlineKeyboardButton(
+            "⏸ Pausar" if rec.enabled else "▶️ Activar", callback_data=f"r:toggle:{rec.id}"
+        )],
+        [InlineKeyboardButton(
+            f"📌 Fijar: {'Sí' if rec.pin else 'No'}", callback_data=f"r:togpin:{rec.id}"
+        )],
+        [InlineKeyboardButton(
+            f"🗑 Borrar anterior: {'Sí' if rec.delete_previous else 'No'}",
+            callback_data=f"r:togdel:{rec.id}",
+        )],
+        [InlineKeyboardButton("❌ Eliminar definitivamente", callback_data=f"r:delask:{rec.id}")],
+        [InlineKeyboardButton("🔙 Volver a la lista", callback_data=f"r:list:{rec.group_id}")],
+    ]
+    return text, InlineKeyboardMarkup(rows)

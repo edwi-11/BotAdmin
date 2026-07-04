@@ -13,7 +13,7 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from database import Database
-from utils.formatting import error, escape_md, mention, success
+from utils.formatting import error, escape_md, humanize_seconds, mention, success
 from utils.parsing import resolve_target
 from utils.permissions import can_moderate, check_bot_rights, check_executor_is_admin
 from utils.time_parser import parse_duration
@@ -220,6 +220,125 @@ async def unmute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"🔊 *Usuario reactivado*\n"
         f"👤 Usuario: {mention(resolved.user_id, resolved.display_name)}\n"
         f"🛡 Administrador: {mention(executor.id, executor.first_name)}"
+    )
+    await _reply(update, text)
+
+
+async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/warn [@usuario|ID|responder] [motivo] — agrega una advertencia.
+    Al llegar al límite configurado (por defecto 3), aplica el castigo
+    configurado en el menú ⚙️ → ❗ Advertencias (mute/kick/ban) y reinicia
+    el contador del usuario."""
+    if not await _guard_group(update):
+        return
+    db = _get_db(context)
+    chat = update.effective_chat
+    executor = update.effective_user
+
+    bot_rights = await check_bot_rights(context.bot, chat.id)
+    if not bot_rights.allowed:
+        await _reply(update, error(bot_rights.reason))
+        return
+
+    resolved = await resolve_target(update, db, context.args)
+    if isinstance(resolved, str):
+        await _reply(update, error(resolved))
+        return
+
+    perm = await can_moderate(context.bot, chat.id, executor.id, resolved.user_id)
+    if not perm.allowed:
+        await _reply(update, error(perm.reason))
+        return
+
+    reason = " ".join(resolved.remaining_args).strip() or "No especificado"
+    settings = await db.get_group_settings(chat.id)
+    count = await db.add_warning(chat.id, resolved.user_id)
+
+    await db.add_log("warn", executor.id, executor.first_name, resolved.user_id,
+                      resolved.display_name, chat.id, chat.title, reason)
+
+    if count < settings.warn_limit:
+        text = (
+            f"❗ *Advertencia registrada*\n"
+            f"👤 Usuario: {mention(resolved.user_id, resolved.display_name)}\n"
+            f"🛡 Administrador: {mention(executor.id, executor.first_name)}\n"
+            f"📝 Motivo: {escape_md(reason)}\n"
+            f"🔢 Advertencias: *{count}/{settings.warn_limit}*"
+        )
+        await _reply(update, text)
+        return
+
+    # Se alcanzó el límite: aplicar castigo configurado y reiniciar el contador.
+    await db.reset_warnings(chat.id, resolved.user_id)
+    punishment_text = await _apply_warn_punishment(context, chat.id, resolved.user_id, settings)
+
+    text = (
+        f"❗ *Límite de advertencias alcanzado*\n"
+        f"👤 Usuario: {mention(resolved.user_id, resolved.display_name)}\n"
+        f"🛡 Administrador: {mention(executor.id, executor.first_name)}\n"
+        f"📝 Motivo: {escape_md(reason)}\n"
+        f"🔢 Advertencias: *{count}/{settings.warn_limit}*\n"
+        f"{punishment_text}"
+    )
+    await _reply(update, text)
+
+
+async def _apply_warn_punishment(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int, settings) -> str:
+    """Aplica el castigo configurado para advertencias y devuelve una línea describiéndolo."""
+    try:
+        if settings.warn_action == "ban":
+            await context.bot.ban_chat_member(chat_id, user_id)
+            return "🔨 Castigo aplicado: usuario baneado."
+        if settings.warn_action == "kick":
+            await context.bot.ban_chat_member(chat_id, user_id)
+            await context.bot.unban_chat_member(chat_id, user_id, only_if_banned=True)
+            return "👢 Castigo aplicado: usuario expulsado."
+        # mute (por defecto)
+        until_date = None
+        if settings.warn_mute_seconds > 0:
+            until_date = datetime.now(timezone.utc) + timedelta(seconds=settings.warn_mute_seconds)
+        await context.bot.restrict_chat_member(
+            chat_id, user_id,
+            permissions=ChatPermissions(can_send_messages=False, can_send_other_messages=False,
+                                         can_send_polls=False, can_add_web_page_previews=False),
+            until_date=until_date,
+        )
+        duration_text = "permanentemente" if settings.warn_mute_seconds == 0 else \
+            f"por {escape_md(humanize_seconds(settings.warn_mute_seconds))}"
+        return f"🔇 Castigo aplicado: silenciado {duration_text}."
+    except TelegramError as exc:
+        return f"⚠️ No se pudo aplicar el castigo automáticamente: {escape_md(str(exc))}"
+
+
+async def unwarn_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/unwarn [@usuario|ID|responder] — quita una advertencia."""
+    if not await _guard_group(update):
+        return
+    db = _get_db(context)
+    chat = update.effective_chat
+    executor = update.effective_user
+
+    executor_check = await check_executor_is_admin(context.bot, chat.id, executor.id)
+    if not executor_check.allowed:
+        await _reply(update, error(executor_check.reason))
+        return
+
+    resolved = await resolve_target(update, db, context.args)
+    if isinstance(resolved, str):
+        await _reply(update, error(resolved))
+        return
+
+    count = await db.remove_warning(chat.id, resolved.user_id)
+    settings = await db.get_group_settings(chat.id)
+
+    await db.add_log("unwarn", executor.id, executor.first_name, resolved.user_id,
+                      resolved.display_name, chat.id, chat.title, None)
+
+    text = (
+        f"✅ *Advertencia retirada*\n"
+        f"👤 Usuario: {mention(resolved.user_id, resolved.display_name)}\n"
+        f"🛡 Administrador: {mention(executor.id, executor.first_name)}\n"
+        f"🔢 Advertencias: *{count}/{settings.warn_limit}*"
     )
     await _reply(update, text)
 

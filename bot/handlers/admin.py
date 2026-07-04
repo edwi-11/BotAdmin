@@ -11,6 +11,7 @@ from telegram.constants import ChatMemberStatus, ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
+from config import settings
 from database import Database
 from utils.formatting import error, escape_md, mention, success
 from utils.parsing import resolve_target
@@ -154,6 +155,7 @@ async def staff_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not await _guard_group(update):
         return
     chat = update.effective_chat
+    db = _get_db(context)
     try:
         members = await context.bot.get_chat_administrators(chat.id)
     except TelegramError as exc:
@@ -162,14 +164,28 @@ async def staff_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     owner_lines = []
     admin_lines = []
-    seen_ids = set()
+    seen_owner_ids: set[int] = set()
 
     for m in members:
-        seen_ids.add(m.user.id)
+        # Un mismo usuario puede ser a la vez "owner" del grupo (Telegram) y
+        # "owner" del bot (configurado en OWNER_IDS). Antes esto lo hacía
+        # aparecer dos veces en la lista de propietarios; ahora se deduplica
+        # por user_id para que cada persona salga una sola vez.
         if m.status == ChatMemberStatus.OWNER or is_owner(m.user.id):
-            owner_lines.append(f"👑 {mention(m.user.id, m.user.first_name)}")
+            if m.user.id not in seen_owner_ids:
+                seen_owner_ids.add(m.user.id)
+                owner_lines.append(f"👑 {mention(m.user.id, m.user.first_name)}")
         else:
             admin_lines.append(f"🛡 {mention(m.user.id, m.user.first_name)}")
+
+    # Si algún propietario del bot (OWNER_IDS) no aparece en get_chat_administrators
+    # (por ejemplo, no es miembro del grupo o Telegram no lo reporta), igual lo
+    # mostramos como propietario, sin duplicar.
+    for oid in settings.owner_ids:
+        if oid not in seen_owner_ids and oid not in (m.user.id for m in members):
+            name = await db.get_user_display_name(oid) or str(oid)
+            seen_owner_ids.add(oid)
+            owner_lines.append(f"👑 {mention(oid, name)}")
 
     lines = ["*👥 Staff del grupo*", "", "*Propietario:*"]
     lines.extend(owner_lines or ["No especificado"])

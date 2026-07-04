@@ -98,6 +98,14 @@ CREATE TABLE IF NOT EXISTS banned_words (
     added_at  INTEGER NOT NULL,
     PRIMARY KEY (group_id, word)
 );
+
+CREATE TABLE IF NOT EXISTS warnings (
+    group_id    INTEGER NOT NULL,
+    user_id     INTEGER NOT NULL,
+    count       INTEGER NOT NULL DEFAULT 0,
+    updated_at  INTEGER NOT NULL,
+    PRIMARY KEY (group_id, user_id)
+);
 """
 
 # Columnas que se añadieron después de la primera versión del esquema.
@@ -113,6 +121,9 @@ _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("filter_punishment", "TEXT NOT NULL DEFAULT 'none'"),
         ("filter_mute_seconds", "INTEGER NOT NULL DEFAULT 0"),
         ("filter_delete", "INTEGER NOT NULL DEFAULT 1"),
+        ("warn_limit", "INTEGER NOT NULL DEFAULT 3"),
+        ("warn_action", "TEXT NOT NULL DEFAULT 'mute'"),
+        ("warn_mute_seconds", "INTEGER NOT NULL DEFAULT 3600"),
     ],
 }
 
@@ -150,6 +161,9 @@ class GroupSettings:
     filter_punishment: str = "none"     # none | mute | ban
     filter_mute_seconds: int = 0        # 0 = mute permanente
     filter_delete: bool = True
+    warn_limit: int = 3                 # cantidad de advertencias antes de castigar
+    warn_action: str = "mute"           # mute | kick | ban
+    warn_mute_seconds: int = 3600       # 0 = mute permanente (solo si warn_action == mute)
 
 
 @dataclass(slots=True)
@@ -369,6 +383,7 @@ class Database:
         "goodbye_text", "rules_text", "clean_welcome", "afk_enabled",
         "delete_join", "delete_leave", "delete_call", "delete_commands",
         "filter_punishment", "filter_mute_seconds", "filter_delete",
+        "warn_limit", "warn_action", "warn_mute_seconds",
     }
 
     async def get_group_settings(self, group_id: int) -> GroupSettings:
@@ -395,6 +410,9 @@ class Database:
             filter_punishment=(row["filter_punishment"] if "filter_punishment" in keys and row["filter_punishment"] else "none"),
             filter_mute_seconds=(row["filter_mute_seconds"] if "filter_mute_seconds" in keys and row["filter_mute_seconds"] is not None else 0),
             filter_delete=bool(row["filter_delete"]) if "filter_delete" in keys and row["filter_delete"] is not None else True,
+            warn_limit=(row["warn_limit"] if "warn_limit" in keys and row["warn_limit"] is not None else 3),
+            warn_action=(row["warn_action"] if "warn_action" in keys and row["warn_action"] else "mute"),
+            warn_mute_seconds=(row["warn_mute_seconds"] if "warn_mute_seconds" in keys and row["warn_mute_seconds"] is not None else 3600),
         )
 
     async def set_group_setting(self, group_id: int, column: str, value) -> None:
@@ -576,4 +594,74 @@ class Database:
         )
         rows = await cursor.fetchall()
         return [row["word"] for row in rows]
+
+    # ------------------------------------------------------------------ #
+    # Advertencias (warnings)
+    # ------------------------------------------------------------------ #
+    async def add_warning(self, group_id: int, user_id: int) -> int:
+        """Suma 1 advertencia y devuelve el nuevo total."""
+        await self.conn.execute(
+            """
+            INSERT INTO warnings (group_id, user_id, count, updated_at)
+            VALUES (?, ?, 1, ?)
+            ON CONFLICT(group_id, user_id) DO UPDATE SET
+                count = count + 1,
+                updated_at = excluded.updated_at
+            """,
+            (group_id, user_id, int(time.time())),
+        )
+        await self.conn.commit()
+        return await self.get_warning_count(group_id, user_id)
+
+    async def remove_warning(self, group_id: int, user_id: int) -> int:
+        """Resta 1 advertencia (sin bajar de 0) y devuelve el nuevo total."""
+        current = await self.get_warning_count(group_id, user_id)
+        new_count = max(0, current - 1)
+        await self.conn.execute(
+            """
+            INSERT INTO warnings (group_id, user_id, count, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(group_id, user_id) DO UPDATE SET
+                count = excluded.count,
+                updated_at = excluded.updated_at
+            """,
+            (group_id, user_id, new_count, int(time.time())),
+        )
+        await self.conn.commit()
+        return new_count
+
+    async def get_warning_count(self, group_id: int, user_id: int) -> int:
+        cursor = await self.conn.execute(
+            "SELECT count FROM warnings WHERE group_id = ? AND user_id = ?", (group_id, user_id)
+        )
+        row = await cursor.fetchone()
+        return int(row["count"]) if row else 0
+
+    async def reset_warnings(self, group_id: int, user_id: int) -> None:
+        await self.conn.execute(
+            "DELETE FROM warnings WHERE group_id = ? AND user_id = ?", (group_id, user_id)
+        )
+        await self.conn.commit()
+
+    # ------------------------------------------------------------------ #
+    # Actualización completa de un mensaje recurrente ya existente
+    # (usado por el editor de un solo menú: foto/texto/botones/intervalo).
+    # ------------------------------------------------------------------ #
+    async def update_recurring_message(self, rec_id: int, **fields) -> None:
+        allowed = {
+            "content_type", "text", "entities", "file_id", "buttons",
+            "interval_seconds", "pin", "delete_previous",
+        }
+        set_fields = {k: v for k, v in fields.items() if k in allowed}
+        if not set_fields:
+            return
+        for bool_field in ("pin", "delete_previous"):
+            if bool_field in set_fields:
+                set_fields[bool_field] = int(set_fields[bool_field])
+        columns = ", ".join(f"{k} = ?" for k in set_fields)
+        values = list(set_fields.values()) + [rec_id]
+        await self.conn.execute(
+            f"UPDATE recurring_messages SET {columns} WHERE id = ?", values
+        )
+        await self.conn.commit()
 

@@ -26,6 +26,7 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from database import Database
+from utils.callbacks import safe_callback
 from utils.formatting import error, escape_md, humanize_seconds, mention, success
 from utils.permissions import is_chat_admin, is_owner
 
@@ -168,6 +169,7 @@ def _build_words_menu(group_id: int, settings) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+@safe_callback
 async def words_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     data = query.data or ""
@@ -204,23 +206,41 @@ async def words_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     if action == "add":
-        context.user_data["pending_words"] = {"action": "add", "group_id": group_id}
+        context.user_data["pending_words"] = {
+            "action": "add", "group_id": group_id,
+            "chat_id": query.message.chat_id, "message_id": query.message.message_id,
+        }
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancelar", callback_data=f"w:cancelwords:{group_id}")]])
         await query.edit_message_text(
-            "➕ Envía la(s) palabra(s) a prohibir\\. Si son varias, una por línea\\.\n"
-            "Escribe /cancelar para cancelar\\.",
+            "➕ Envía la\\(s\\) palabra\\(s\\) a prohibir\\. Si son varias, una por línea\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
+            reply_markup=cancel_kb,
         )
         await query.answer()
         return
 
     if action == "remove":
-        context.user_data["pending_words"] = {"action": "remove", "group_id": group_id}
+        context.user_data["pending_words"] = {
+            "action": "remove", "group_id": group_id,
+            "chat_id": query.message.chat_id, "message_id": query.message.message_id,
+        }
+        cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancelar", callback_data=f"w:cancelwords:{group_id}")]])
         await query.edit_message_text(
-            "➖ Envía la(s) palabra(s) a eliminar del filtro\\. Si son varias, una por línea\\.\n"
-            "Escribe /cancelar para cancelar\\.",
+            "➖ Envía la\\(s\\) palabra\\(s\\) a eliminar del filtro\\. Si son varias, una por línea\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
+            reply_markup=cancel_kb,
         )
         await query.answer()
+        return
+
+    if action == "cancelwords":
+        context.user_data.pop("pending_words", None)
+        settings = await db.get_group_settings(group_id)
+        await query.edit_message_text(
+            await _words_text(db, group_id), parse_mode=ParseMode.MARKDOWN_V2,
+            reply_markup=_build_words_menu(group_id, settings),
+        )
+        await query.answer("Cancelado.")
         return
 
     if action == "punishment":
@@ -291,6 +311,8 @@ async def try_consume_pending_words(update: Update, context: ContextTypes.DEFAUL
     db = _get_db(context)
     group_id = pending["group_id"]
     action = pending["action"]
+    chat_id = pending.get("chat_id")
+    message_id = pending.get("message_id")
 
     if text.lower() in ("/cancelar", "cancelar"):
         context.user_data.pop("pending_words", None)
@@ -303,21 +325,36 @@ async def try_consume_pending_words(update: Update, context: ContextTypes.DEFAUL
         for w in words:
             if await db.add_banned_word(group_id, w, update.effective_user.id):
                 added += 1
-        await message.reply_text(success(f"Se agregaron {added} palabra(s) prohibida(s)."))
+        summary = success(f"Se agregaron {added} palabra(s) prohibida(s).")
     else:
         removed = 0
         for w in words:
             if await db.remove_banned_word(group_id, w):
                 removed += 1
-        await message.reply_text(success(f"Se eliminaron {removed} palabra(s) del filtro."))
+        summary = success(f"Se eliminaron {removed} palabra(s) del filtro.")
 
     context.user_data.pop("pending_words", None)
-
     settings = await db.get_group_settings(group_id)
-    await message.reply_text(
-        await _words_text(db, group_id), parse_mode=ParseMode.MARKDOWN_V2,
-        reply_markup=_build_words_menu(group_id, settings),
-    )
+    menu_text = await _words_text(db, group_id)
+    menu_markup = _build_words_menu(group_id, settings)
+
+    # Editamos el mismo mensaje del menú (si seguimos pudiendo) para que todo
+    # quede dentro de una única pantalla de configuración, sin ir dejando
+    # mensajes sueltos uno tras otro.
+    edited = False
+    if chat_id is not None and message_id is not None:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id, message_id=message_id,
+                text=menu_text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=menu_markup,
+            )
+            edited = True
+        except TelegramError as exc:
+            logger.warning("No pude editar el menú de palabras tras la edición: %s", exc)
+
+    await message.reply_text(summary)
+    if not edited:
+        await message.reply_text(menu_text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=menu_markup)
     return True
 
 

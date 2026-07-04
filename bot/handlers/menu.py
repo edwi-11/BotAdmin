@@ -29,8 +29,9 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from database import Database
+from utils.callbacks import safe_callback
 from utils.formatting import escape_md
-from utils.permissions import is_owner
+from utils.permissions import is_chat_admin, is_owner
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,6 @@ SOON_SECTIONS: list[tuple[str, str, str]] = [
     ("antiflood", "Anti-flood", "🗣"),
     ("captcha", "Captcha", "🧠"),
     ("multimedia", "Multimedia", "📸"),
-    ("advertencias", "Advertencias", "❗"),
     ("nocturno", "Modo nocturno", "🌙"),
 ]
 
@@ -66,13 +66,7 @@ def _onoff(value: bool) -> str:
 # Permisos
 # --------------------------------------------------------------------- #
 async def _user_can_manage(context: ContextTypes.DEFAULT_TYPE, group_id: int, user_id: int) -> bool:
-    if is_owner(user_id):
-        return True
-    try:
-        member = await context.bot.get_chat_member(group_id, user_id)
-    except TelegramError:
-        return False
-    return member.status in ("administrator", "creator")
+    return await is_chat_admin(context.bot, group_id, user_id)
 
 
 async def _admin_groups(context: ContextTypes.DEFAULT_TYPE, db: Database, user_id: int) -> list[tuple[int, str]]:
@@ -108,6 +102,9 @@ def build_main_menu(group_id: int, is_private: bool) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton("🚫 Palabras prohibidas", callback_data=f"w:menu:{group_id}"),
             InlineKeyboardButton("🧹 Auto-eliminar", callback_data=f"c:menu:{group_id}"),
+        ],
+        [
+            InlineKeyboardButton("❗ Advertencias", callback_data=f"aw:menu:{group_id}"),
         ],
     ]
     for i in range(0, len(SOON_SECTIONS), 2):
@@ -260,6 +257,7 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 # --------------------------------------------------------------------- #
 # Callback query dispatcher
 # --------------------------------------------------------------------- #
+@safe_callback
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     data = query.data or ""

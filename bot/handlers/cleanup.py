@@ -28,6 +28,7 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from database import Database
+from utils.callbacks import safe_callback
 from utils.permissions import is_chat_admin
 
 logger = logging.getLogger(__name__)
@@ -123,6 +124,7 @@ _TOGGLE_COLUMNS = {
 }
 
 
+@safe_callback
 async def cleanup_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     data = query.data or ""
