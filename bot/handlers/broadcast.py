@@ -17,12 +17,15 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+import uuid
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
+from config import settings
 from database import Database
 from utils.callbacks import safe_callback
 from utils.entities import (
@@ -37,6 +40,17 @@ from utils.formatting import error, escape_md, success
 from utils.permissions import is_owner
 
 logger = logging.getLogger(__name__)
+
+# Carpeta donde se guardan localmente los archivos multimedia de los
+# anuncios. IMPORTANTE: el `file_id` de Telegram solo es válido para el
+# bot que lo generó. Como este bot anunciador tiene un token distinto al
+# del bot de moderación (que es quien realmente envía el anuncio a los
+# grupos), no podemos simplemente guardar el file_id en la cola: hay que
+# descargar el archivo a disco (ambos procesos corren en el mismo
+# servidor y comparten la carpeta `database/`) para que el bot de
+# moderación lo suba él mismo con su propio token.
+BROADCAST_MEDIA_DIR = settings.logs_dir.parent / "database" / "broadcast_media"
+LOCAL_FILE_PREFIX = "LOCALFILE:"
 
 MEDIA_LABELS = {
     "photo": "Foto", "video": "Video", "animation": "GIF",
@@ -88,6 +102,18 @@ async def _send_content(context, chat_id, content_type, text, entities_json, fil
     field = {"photo": "photo", "video": "video", "animation": "animation",
               "document": "document", "audio": "audio", "voice": "voice"}[content_type]
     return await sender(chat_id, **{field: file_id}, **kwargs)
+
+
+async def _localize_media_for_dispatch(context: ContextTypes.DEFAULT_TYPE, draft: dict) -> str:
+    """Descarga el file_id (válido solo para ESTE bot anunciador) a disco y
+    devuelve una referencia local que el bot de moderación pueda leer y
+    subir con su propio token al momento de despachar el anuncio."""
+    BROADCAST_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    tg_file = await context.bot.get_file(draft["file_id"])
+    ext = (tg_file.file_path or "").rsplit(".", 1)[-1] if tg_file.file_path and "." in tg_file.file_path else "bin"
+    local_path = BROADCAST_MEDIA_DIR / f"{int(time.time())}_{uuid.uuid4().hex}.{ext}"
+    await tg_file.download_to_drive(custom_path=str(local_path))
+    return f"{LOCAL_FILE_PREFIX}{local_path}"
 
 
 def _draft_view(draft: dict) -> tuple[str, InlineKeyboardMarkup]:
@@ -235,9 +261,19 @@ async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     if action == "senddo":
+        file_ref = draft.get("file_id")
+        if draft["content_type"] != "text" and file_ref:
+            try:
+                file_ref = await _localize_media_for_dispatch(context, draft)
+            except TelegramError as exc:
+                logger.warning("No se pudo descargar el archivo del anuncio para despacho: %s", exc)
+                await query.answer(
+                    "No se pudo preparar el archivo multimedia. Intenta de nuevo.", show_alert=True
+                )
+                return
         broadcast_id = await db.create_broadcast(
             content_type=draft["content_type"], text=draft.get("text"),
-            entities=draft["entities_json"], file_id=draft.get("file_id"),
+            entities=draft["entities_json"], file_id=file_ref,
             buttons=draft["buttons_json"], created_by=user.id,
         )
         context.user_data.pop("broadcast_draft", None)

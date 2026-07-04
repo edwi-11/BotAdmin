@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+from pathlib import Path
+from typing import Optional
 
 from telegram import BotCommand, Update
 from telegram.error import TelegramError
@@ -49,6 +52,7 @@ from handlers.moderation import (
     unwarn_command,
     warn_command,
 )
+from handlers.recurring import LOCAL_FILE_PREFIX
 from handlers.recurring import _send_content as _send_broadcast_content
 from handlers.recurring import load_all_recurring_jobs, recurring_callback, try_consume_draft_input
 from handlers.warnings import warnings_callback
@@ -79,6 +83,21 @@ BOT_COMMANDS = [
 ]
 
 
+def _extract_sent_file_id(message, content_type: str) -> Optional[str]:
+    """Toma el file_id que Telegram acaba de asignar (bajo el token de ESTE
+    bot) al mensaje recién enviado, para reutilizarlo en los siguientes
+    grupos sin tener que volver a subir el archivo desde disco cada vez."""
+    if content_type == "photo" and message.photo:
+        return message.photo[-1].file_id
+    getter = {
+        "video": lambda m: m.video, "animation": lambda m: m.animation,
+        "document": lambda m: m.document, "audio": lambda m: m.audio,
+        "voice": lambda m: m.voice,
+    }.get(content_type)
+    obj = getter(message) if getter else None
+    return obj.file_id if obj else None
+
+
 async def _broadcast_dispatch_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Revisa la cola de anuncios (llenada por el bot anunciador, si lo usas)
     y envía cada anuncio pendiente a todos los grupos conocidos."""
@@ -91,17 +110,43 @@ async def _broadcast_dispatch_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     for broadcast in pending:
         sent_count = 0
         failed_count = 0
+        # El file_id puede venir marcado como archivo local en disco (lo
+        # dejó ahí el bot anunciador, porque su file_id no sirve para este
+        # bot). Lo subimos una sola vez al primer grupo y, si funciona,
+        # reutilizamos el file_id resultante (ya válido para este bot) en
+        # el resto de los grupos en vez de volver a leer el disco.
+        current_file_ref = broadcast.file_id
+        is_local = bool(current_file_ref and current_file_ref.startswith(LOCAL_FILE_PREFIX))
+
         for group_id, _title in groups:
             try:
-                await _send_broadcast_content(
+                sent = await _send_broadcast_content(
                     context, group_id, broadcast.content_type, broadcast.text,
-                    broadcast.entities, broadcast.file_id, broadcast.buttons,
+                    broadcast.entities, current_file_ref, broadcast.buttons,
                 )
                 sent_count += 1
+                if is_local:
+                    reused = _extract_sent_file_id(sent, broadcast.content_type)
+                    if reused:
+                        current_file_ref = reused
+                        is_local = False
             except TelegramError as exc:
                 failed_count += 1
                 logger.warning("No se pudo enviar el anuncio #%s al grupo %s: %s", broadcast.id, group_id, exc)
+            except FileNotFoundError as exc:
+                failed_count += 1
+                logger.warning("Anuncio #%s: %s", broadcast.id, exc)
+                break
             await asyncio.sleep(BROADCAST_DELAY_BETWEEN_GROUPS)
+
+        if broadcast.file_id and broadcast.file_id.startswith(LOCAL_FILE_PREFIX):
+            local_path = Path(broadcast.file_id[len(LOCAL_FILE_PREFIX):])
+            try:
+                if local_path.is_file():
+                    os.remove(local_path)
+            except OSError as exc:
+                logger.warning("No se pudo borrar el archivo temporal del anuncio #%s: %s", broadcast.id, exc)
+
         await db.mark_broadcast_sent(broadcast.id, sent_count, failed_count)
         logger.info(
             "Anuncio #%s enviado: %d exitosos, %d fallidos de %d grupos.",

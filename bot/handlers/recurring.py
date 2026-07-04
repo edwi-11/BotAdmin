@@ -41,6 +41,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+from pathlib import Path
 from typing import Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
@@ -122,6 +124,25 @@ async def load_all_recurring_jobs(application: Application, db: Database) -> Non
 # --------------------------------------------------------------------- #
 # Envío real (usado tanto por el job programado como por "Vista previa")
 # --------------------------------------------------------------------- #
+# Prefijo usado por el bot anunciador (handlers/broadcast.py) cuando el
+# `file_id` original no es válido para este bot (viene de otro token de
+# BotFather): en ese caso guarda una ruta local en disco en su lugar.
+LOCAL_FILE_PREFIX = "LOCALFILE:"
+
+
+def _resolve_media(file_id: Optional[str]):
+    """Si `file_id` es en realidad una ruta local (anuncio cruzado desde el
+    bot anunciador, que tiene otro token), devuelve un objeto abierto en
+    binario para subirlo de cero. Si es un file_id normal de Telegram, lo
+    devuelve tal cual para reutilizarlo sin volver a subir nada."""
+    if file_id and file_id.startswith(LOCAL_FILE_PREFIX):
+        path = Path(file_id[len(LOCAL_FILE_PREFIX):])
+        if not path.is_file():
+            raise FileNotFoundError(f"Archivo de anuncio no encontrado en disco: {path}")
+        return open(path, "rb")
+    return file_id
+
+
 async def _send_content(
     context: ContextTypes.DEFAULT_TYPE, chat_id: int, content_type: str,
     text: Optional[str], entities_json: str, file_id: Optional[str], buttons_json: str,
@@ -132,20 +153,25 @@ async def _send_content(
     if content_type == "text":
         return await context.bot.send_message(chat_id, text or "", entities=entities, reply_markup=markup)
 
-    kwargs = dict(caption=text, caption_entities=entities, reply_markup=markup)
-    if content_type == "photo":
-        return await context.bot.send_photo(chat_id, photo=file_id, **kwargs)
-    if content_type == "video":
-        return await context.bot.send_video(chat_id, video=file_id, **kwargs)
-    if content_type == "animation":
-        return await context.bot.send_animation(chat_id, animation=file_id, **kwargs)
-    if content_type == "document":
-        return await context.bot.send_document(chat_id, document=file_id, **kwargs)
-    if content_type == "audio":
-        return await context.bot.send_audio(chat_id, audio=file_id, **kwargs)
-    if content_type == "voice":
-        return await context.bot.send_voice(chat_id, voice=file_id, **kwargs)
-    raise ValueError(f"Tipo de contenido desconocido: {content_type}")
+    media = _resolve_media(file_id)
+    try:
+        kwargs = dict(caption=text, caption_entities=entities, reply_markup=markup)
+        if content_type == "photo":
+            return await context.bot.send_photo(chat_id, photo=media, **kwargs)
+        if content_type == "video":
+            return await context.bot.send_video(chat_id, video=media, **kwargs)
+        if content_type == "animation":
+            return await context.bot.send_animation(chat_id, animation=media, **kwargs)
+        if content_type == "document":
+            return await context.bot.send_document(chat_id, document=media, **kwargs)
+        if content_type == "audio":
+            return await context.bot.send_audio(chat_id, audio=media, **kwargs)
+        if content_type == "voice":
+            return await context.bot.send_voice(chat_id, voice=media, **kwargs)
+        raise ValueError(f"Tipo de contenido desconocido: {content_type}")
+    finally:
+        if hasattr(media, "close"):
+            media.close()
 
 
 async def _send_recurring(context: ContextTypes.DEFAULT_TYPE, rec_id: int) -> None:
