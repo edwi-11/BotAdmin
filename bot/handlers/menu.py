@@ -72,7 +72,13 @@ async def _user_can_manage(context: ContextTypes.DEFAULT_TYPE, group_id: int, us
 async def _admin_groups(context: ContextTypes.DEFAULT_TYPE, db: Database, user_id: int) -> list[tuple[int, str]]:
     groups = await db.get_known_groups()
     allowed: list[tuple[int, str]] = []
+    owner = is_owner(user_id)
     for group_id, title in groups:
+        # Un administrador normal solo ve/gestiona grupos que el propietario
+        # activó explícitamente con /activar. El propietario ve todos, para
+        # poder configurarlos incluso antes de activarlos.
+        if not owner and not await db.is_group_activated(group_id):
+            continue
         if await _user_can_manage(context, group_id, user_id):
             allowed.append((group_id, title))
     return allowed
