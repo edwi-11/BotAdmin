@@ -66,11 +66,10 @@ async def check_bot_rights(bot: Bot, chat_id: int) -> PermissionResult:
 
 
 def _has_change_info_permission(member: Optional[ChatMember]) -> bool:
-    """El creador del grupo siempre tiene control total. Un administrador
-    normal solo cuenta como administrador "de verdad" para el bot si el
-    dueño del grupo le dio el permiso 'Cambiar info del grupo'
-    (can_change_info); se usa como requisito mínimo de confianza para
-    poder usar el bot."""
+    """Requisito ESTRICTO, usado solo para el panel de configuración
+    (/menu, /start): el creador del grupo siempre califica; un
+    administrador normal solo si el dueño del grupo le dio el permiso
+    'Cambiar info del grupo' (can_change_info)."""
     if member is None:
         return False
     if member.status == ChatMemberStatus.OWNER:
@@ -80,14 +79,56 @@ def _has_change_info_permission(member: Optional[ChatMember]) -> bool:
     return False
 
 
+def _is_any_admin(member: Optional[ChatMember]) -> bool:
+    """Requisito AMPLIO, usado para los comandos normales de moderación
+    (/ban, /kick, /mute, /unmute, /warn, /unwarn, /unban, /delban,
+    /delkick, /delwarn): cualquier administrador real de Telegram
+    (owner o admin, sin importar qué permisos puntuales tenga)."""
+    if member is None:
+        return False
+    return member.status in (ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR)
+
+
 async def is_chat_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
+    """Requisito ESTRICTO (can_change_info). Lo usan los paneles de
+    configuración por botones (menú, palabras prohibidas, mensajes
+    recurrentes, advertencias, auto-eliminar), NO los comandos normales
+    de moderación."""
     if is_owner(user_id):
         return True
     member = await get_member(bot, chat_id, user_id)
     return _has_change_info_permission(member)
 
 
+async def is_real_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
+    """Requisito AMPLIO: cualquier administrador real de Telegram (o el
+    propietario del bot). Lo usa can_moderate() para decidir si el
+    objetivo de una sanción es "otro admin" (y por lo tanto intocable
+    para un admin normal)."""
+    if is_owner(user_id):
+        return True
+    member = await get_member(bot, chat_id, user_id)
+    return _is_any_admin(member)
+
+
 async def check_executor_is_admin(bot: Bot, chat_id: int, user_id: int) -> PermissionResult:
+    """Usado por los comandos de moderación: acepta a cualquier
+    administrador real del grupo (no exige el permiso puntual de
+    'Cambiar info del grupo'). Para el panel /menu se usa
+    check_menu_access, que sí exige ese permiso."""
+    if is_owner(user_id):
+        return PermissionResult(True)
+    member = await get_member(bot, chat_id, user_id)
+    if _is_any_admin(member):
+        return PermissionResult(True)
+    return PermissionResult(False, "No tienes permisos de administrador para usar este comando.")
+
+
+async def check_menu_access(bot: Bot, chat_id: int, user_id: int) -> PermissionResult:
+    """Usado EXCLUSIVAMENTE para el panel de configuración (/menu, /start):
+    exige el permiso puntual 'Cambiar info del grupo' (o ser el
+    propietario del bot). Es deliberadamente más estricto que
+    check_executor_is_admin, que ahora acepta a cualquier admin."""
     if is_owner(user_id):
         return PermissionResult(True)
     member = await get_member(bot, chat_id, user_id)
@@ -96,7 +137,7 @@ async def check_executor_is_admin(bot: Bot, chat_id: int, user_id: int) -> Permi
     if member is not None and member.status == ChatMemberStatus.ADMINISTRATOR:
         return PermissionResult(
             False,
-            "Eres administrador del grupo, pero para usar este bot el dueño del grupo "
+            "Eres administrador del grupo, pero para usar el menú del bot el dueño del grupo "
             "debe darte el permiso «Cambiar info del grupo» (Change group info).",
         )
     return PermissionResult(False, "No tienes permisos de administrador para usar este comando.")
@@ -123,7 +164,7 @@ async def can_moderate(bot: Bot, chat_id: int, executor_id: int, target_id: int)
     if not executor_check.allowed:
         return executor_check
 
-    target_is_admin = await is_chat_admin(bot, chat_id, target_id)
+    target_is_admin = await is_real_admin(bot, chat_id, target_id)
     if target_is_admin:
         return PermissionResult(
             False, "Solo el propietario puede moderar o administrar a otros administradores."

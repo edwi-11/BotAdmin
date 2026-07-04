@@ -38,7 +38,18 @@ async def _guard_group(update: Update) -> bool:
     return True
 
 
-async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _delete_replied_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Borra el mensaje al que se respondió (usado por /delban /delkick /delwarn)."""
+    message = update.effective_message
+    if message.reply_to_message is None:
+        return
+    try:
+        await context.bot.delete_message(update.effective_chat.id, message.reply_to_message.message_id)
+    except TelegramError as exc:
+        logger.warning("No se pudo borrar el mensaje respondido: %s", exc)
+
+
+async def _ban_impl(update: Update, context: ContextTypes.DEFAULT_TYPE, delete_replied: bool) -> None:
     if not await _guard_group(update):
         return
     db = _get_db(context)
@@ -61,6 +72,9 @@ async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     reason = " ".join(resolved.remaining_args).strip() or "No especificado"
+
+    if delete_replied:
+        await _delete_replied_message(update, context)
 
     try:
         await context.bot.ban_chat_member(chat.id, resolved.user_id)
@@ -80,7 +94,17 @@ async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await _reply(update, text)
 
 
-async def kick_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _ban_impl(update, context, delete_replied=False)
+
+
+async def delban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/delban [@usuario|ID|responder] [motivo] — igual que /ban, pero además
+    borra el mensaje al que se respondió (si se usó respondiendo a uno)."""
+    await _ban_impl(update, context, delete_replied=True)
+
+
+async def _kick_impl(update: Update, context: ContextTypes.DEFAULT_TYPE, delete_replied: bool) -> None:
     if not await _guard_group(update):
         return
     db = _get_db(context)
@@ -104,6 +128,9 @@ async def kick_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     reason = " ".join(resolved.remaining_args).strip() or "No especificado"
 
+    if delete_replied:
+        await _delete_replied_message(update, context)
+
     try:
         await context.bot.ban_chat_member(chat.id, resolved.user_id)
         await context.bot.unban_chat_member(chat.id, resolved.user_id, only_if_banned=True)
@@ -121,6 +148,16 @@ async def kick_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         f"📝 Motivo: {escape_md(reason)}"
     )
     await _reply(update, text)
+
+
+async def kick_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _kick_impl(update, context, delete_replied=False)
+
+
+async def delkick_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/delkick [@usuario|ID|responder] [motivo] — igual que /kick, pero
+    además borra el mensaje al que se respondió."""
+    await _kick_impl(update, context, delete_replied=True)
 
 
 async def mute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -224,11 +261,10 @@ async def unmute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await _reply(update, text)
 
 
-async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/warn [@usuario|ID|responder] [motivo] — agrega una advertencia.
-    Al llegar al límite configurado (por defecto 3), aplica el castigo
-    configurado en el menú ⚙️ → ❗ Advertencias (mute/kick/ban) y reinicia
-    el contador del usuario."""
+async def _warn_impl(update: Update, context: ContextTypes.DEFAULT_TYPE, delete_replied: bool) -> None:
+    """Agrega una advertencia. Al llegar al límite configurado (por defecto 3),
+    aplica el castigo configurado en el menú ⚙️ → ❗ Advertencias
+    (mute/kick/ban) y reinicia el contador del usuario."""
     if not await _guard_group(update):
         return
     db = _get_db(context)
@@ -251,6 +287,10 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     reason = " ".join(resolved.remaining_args).strip() or "No especificado"
+
+    if delete_replied:
+        await _delete_replied_message(update, context)
+
     settings = await db.get_group_settings(chat.id)
     count = await db.add_warning(chat.id, resolved.user_id)
 
@@ -273,14 +313,22 @@ async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     punishment_text = await _apply_warn_punishment(context, chat.id, resolved.user_id, settings)
 
     text = (
-        f"❗ *Límite de advertencias alcanzado*\n"
-        f"👤 Usuario: {mention(resolved.user_id, resolved.display_name)}\n"
+        f"❗ *{mention(resolved.user_id, resolved.display_name)} recibió {count} advertencias*\n"
         f"🛡 Administrador: {mention(executor.id, executor.first_name)}\n"
         f"📝 Motivo: {escape_md(reason)}\n"
-        f"🔢 Advertencias: *{count}/{settings.warn_limit}*\n"
         f"{punishment_text}"
     )
     await _reply(update, text)
+
+
+async def warn_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _warn_impl(update, context, delete_replied=False)
+
+
+async def delwarn_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/delwarn [@usuario|ID|responder] [motivo] — igual que /warn, pero
+    además borra el mensaje al que se respondió."""
+    await _warn_impl(update, context, delete_replied=True)
 
 
 async def _apply_warn_punishment(context: ContextTypes.DEFAULT_TYPE, chat_id: int, user_id: int, settings) -> str:

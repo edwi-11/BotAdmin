@@ -52,6 +52,9 @@ from handlers.menu import menu_callback, menu_command, try_consume_pending_input
 from handlers.greetings import on_left_member, on_new_members
 from handlers.moderation import (
     ban_command,
+    delban_command,
+    delkick_command,
+    delwarn_command,
     kick_command,
     mute_command,
     unban_command,
@@ -62,6 +65,7 @@ from handlers.moderation import (
 from handlers.recurring import LOCAL_FILE_PREFIX
 from handlers.recurring import _send_content as _send_broadcast_content
 from handlers.recurring import load_all_recurring_jobs, recurring_callback, try_consume_draft_input
+from handlers.utils_cmds import del_command, id_command, info_command, ping_command
 from handlers.warnings import warnings_callback
 from utils.logger import setup_logging
 
@@ -82,11 +86,18 @@ BOT_COMMANDS = [
     BotCommand("unadmin", "Revocar administración"),
     BotCommand("warn", "Advertir a un usuario"),
     BotCommand("unwarn", "Quitar una advertencia"),
+    BotCommand("delwarn", "Advertir y borrar el mensaje respondido"),
     BotCommand("ban", "Banear a un usuario"),
+    BotCommand("delban", "Banear y borrar el mensaje respondido"),
     BotCommand("unban", "Desbanear a un usuario"),
     BotCommand("kick", "Expulsar a un usuario"),
+    BotCommand("delkick", "Expulsar y borrar el mensaje respondido"),
     BotCommand("mute", "Silenciar a un usuario (permanente o temporal)"),
     BotCommand("unmute", "Quitar el silencio a un usuario"),
+    BotCommand("del", "Borrar el mensaje respondido"),
+    BotCommand("id", "Ver tu ID o el de a quien respondas"),
+    BotCommand("info", "Ver información de un usuario"),
+    BotCommand("ping", "Ver la latencia del bot"),
 ]
 
 
@@ -236,14 +247,21 @@ def build_application() -> Application:
 
     # --- Moderación básica (los únicos comandos "/" que quedan) ---
     application.add_handler(CommandHandler("ban", ban_command))
+    application.add_handler(CommandHandler("delban", delban_command))
     application.add_handler(CommandHandler("kick", kick_command))
+    application.add_handler(CommandHandler("delkick", delkick_command))
     application.add_handler(CommandHandler("mute", mute_command))
     application.add_handler(CommandHandler("unmute", unmute_command))
     application.add_handler(CommandHandler("unban", unban_command))
     application.add_handler(CommandHandler("warn", warn_command))
     application.add_handler(CommandHandler("unwarn", unwarn_command))
+    application.add_handler(CommandHandler("delwarn", delwarn_command))
     application.add_handler(CommandHandler("admin", admin_command))
     application.add_handler(CommandHandler("unadmin", unadmin_command))
+    application.add_handler(CommandHandler("del", del_command))
+    application.add_handler(CommandHandler("id", id_command))
+    application.add_handler(CommandHandler("info", info_command))
+    application.add_handler(CommandHandler("ping", ping_command))
 
     # Router de mensajes libres (texto o media): editor de recurrentes,
     # wizard de palabras prohibidas, ediciones pendientes del menú y "brb".

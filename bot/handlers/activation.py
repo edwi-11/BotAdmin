@@ -1,15 +1,20 @@
 """
 handlers/activation.py
-Sistema de "grupos activados": el bot solo funciona en los grupos que el
-propietario activó explícitamente con /activar, y dentro de esos grupos
-solo pueden usarlo administradores con el permiso "Cambiar info del grupo"
-(o el propio propietario).
+Sistema de "grupos activados": el panel de configuración (/menu, /start)
+solo funciona en los grupos que el propietario activó explícitamente con
+/activar, y dentro de esos grupos solo pueden abrirlo administradores con
+el permiso "Cambiar info del grupo" (o el propio propietario).
+
+Los comandos normales de moderación (/ban, /kick, /mute, /unmute, /warn,
+/unwarn, /admin, /unadmin) NO pasan por este control: siguen funcionando
+con su propia lógica de permisos de siempre, sin importar si el grupo
+está activado.
 
 Flujo:
-- Al agregar el bot a un grupo nuevo, o al intentar usar cualquier comando
+- Al agregar el bot a un grupo nuevo, o al intentar abrir /menu o /start
   en un grupo no activado, se responde pidiendo contactar al propietario.
 - El propietario activa el grupo mandando /activar DENTRO del grupo.
-- Una vez activado, si alguien sin permisos intenta usar un comando, se le
+- Una vez activado, si alguien sin permisos intenta abrir /menu, se le
   avisa que debe contactar al propietario para poder usarlo.
 """
 from __future__ import annotations
@@ -21,15 +26,17 @@ from telegram.constants import ChatMemberStatus, ChatType
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from database import Database
-from utils.permissions import check_executor_is_admin, is_owner
+from utils.permissions import check_menu_access, is_owner
 
 logger = logging.getLogger(__name__)
 
 OWNER_CONTACT = "@Sky_lent"
 
-# Comandos que SIEMPRE deben poder ejecutarse (aunque el grupo no esté
-# activado), porque son justamente los que sirven para activar/desactivar.
-EXEMPT_COMMANDS = {"activar", "desactivar"}
+# Solo estos comandos quedan sujetos a "grupo activado + admin con permiso
+# de cambiar info". Los comandos normales de moderación (/ban, /kick, /mute,
+# /unmute, /warn, /unwarn, /admin, /unadmin) siguen funcionando igual que
+# siempre, con su propia lógica de permisos, sin pasar por este control.
+GATED_COMMANDS = {"start", "menu"}
 
 MSG_NOT_ACTIVATED = (
     "🚫 Este grupo no tiene permisos para usar este bot.\n"
@@ -118,8 +125,8 @@ async def group_gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     command = _extract_command(message.text)
-    if command in EXEMPT_COMMANDS:
-        return  # /activar y /desactivar tienen su propia validación
+    if command not in GATED_COMMANDS:
+        return  # comandos de moderación normales no pasan por este control
 
     db: Database = context.application.bot_data["db"]
     activated = await db.is_group_activated(chat.id)
@@ -130,7 +137,7 @@ async def group_gate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if is_owner(user.id):
         return  # el propietario siempre puede usar el bot
 
-    check = await check_executor_is_admin(context.bot, chat.id, user.id)
+    check = await check_menu_access(context.bot, chat.id, user.id)
     if not check.allowed:
         await message.reply_text(MSG_NOT_ADMIN)
         raise ApplicationHandlerStop

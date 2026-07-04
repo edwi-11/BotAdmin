@@ -197,6 +197,15 @@ async def track_and_check_afk(update: Update, context: ContextTypes.DEFAULT_TYPE
     # 3b) Menciones por @username
     for username in _extract_mentioned_usernames(message):
         target_id = await db.get_user_id_by_username(username)
+        if target_id is None:
+            # Respaldo: si nunca vimos a ese usuario escribir un mensaje,
+            # a Telegram directamente para resolver el @username (funciona
+            # con cualquier username público, no depende de nuestra caché).
+            try:
+                chat_info = await context.bot.get_chat(f"@{username}")
+                target_id = chat_info.id
+            except Exception:  # noqa: BLE001 - username no existe o no es resoluble
+                target_id = None
         if target_id and target_id not in checked:
             target_record = cache.get(target_id)
             if target_record:
