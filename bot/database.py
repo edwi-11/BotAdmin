@@ -106,6 +106,21 @@ CREATE TABLE IF NOT EXISTS warnings (
     updated_at  INTEGER NOT NULL,
     PRIMARY KEY (group_id, user_id)
 );
+
+CREATE TABLE IF NOT EXISTS broadcast_queue (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    content_type    TEXT NOT NULL,
+    text            TEXT,
+    entities        TEXT NOT NULL DEFAULT '[]',
+    file_id         TEXT,
+    buttons         TEXT NOT NULL DEFAULT '[]',
+    status          TEXT NOT NULL DEFAULT 'pending',   -- pending | sent
+    created_by      INTEGER,
+    created_at      INTEGER NOT NULL,
+    sent_at         INTEGER,
+    sent_count      INTEGER NOT NULL DEFAULT 0,
+    failed_count    INTEGER NOT NULL DEFAULT 0
+);
 """
 
 # Columnas que se añadieron después de la primera versión del esquema.
@@ -182,6 +197,31 @@ class RecurringMessage:
     last_message_id: Optional[int]
     created_by: int
     created_at: int
+
+
+@dataclass(slots=True)
+class BroadcastMessage:
+    id: int
+    content_type: str
+    text: Optional[str]
+    entities: str
+    file_id: Optional[str]
+    buttons: str
+    status: str
+    created_by: Optional[int]
+    created_at: int
+    sent_at: Optional[int]
+    sent_count: int
+    failed_count: int
+
+
+def _row_to_broadcast(row: aiosqlite.Row) -> BroadcastMessage:
+    return BroadcastMessage(
+        id=row["id"], content_type=row["content_type"], text=row["text"],
+        entities=row["entities"], file_id=row["file_id"], buttons=row["buttons"],
+        status=row["status"], created_by=row["created_by"], created_at=row["created_at"],
+        sent_at=row["sent_at"], sent_count=row["sent_count"], failed_count=row["failed_count"],
+    )
 
 
 class Database:
@@ -662,6 +702,42 @@ class Database:
         values = list(set_fields.values()) + [rec_id]
         await self.conn.execute(
             f"UPDATE recurring_messages SET {columns} WHERE id = ?", values
+        )
+        await self.conn.commit()
+
+    # ------------------------------------------------------------------ #
+    # Cola de anuncios (usada por el bot anunciador -> bot de moderación)
+    # ------------------------------------------------------------------ #
+    async def create_broadcast(
+        self, content_type: str, text: Optional[str], entities: str,
+        file_id: Optional[str], buttons: str, created_by: int,
+    ) -> int:
+        cursor = await self.conn.execute(
+            """
+            INSERT INTO broadcast_queue
+                (content_type, text, entities, file_id, buttons, status, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+            """,
+            (content_type, text, entities, file_id, buttons, created_by, int(time.time())),
+        )
+        await self.conn.commit()
+        return cursor.lastrowid
+
+    async def get_pending_broadcasts(self) -> list["BroadcastMessage"]:
+        cursor = await self.conn.execute(
+            "SELECT * FROM broadcast_queue WHERE status = 'pending' ORDER BY id"
+        )
+        rows = await cursor.fetchall()
+        return [_row_to_broadcast(row) for row in rows]
+
+    async def mark_broadcast_sent(self, broadcast_id: int, sent_count: int, failed_count: int) -> None:
+        await self.conn.execute(
+            """
+            UPDATE broadcast_queue
+            SET status = 'sent', sent_at = ?, sent_count = ?, failed_count = ?
+            WHERE id = ?
+            """,
+            (int(time.time()), sent_count, failed_count, broadcast_id),
         )
         await self.conn.commit()
 

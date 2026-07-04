@@ -163,6 +163,46 @@ Railway Hobby) es el camino más confiable. Las plataformas 100% gratis
 del resto están pensadas para apps web que responden a visitas, no para
 procesos en segundo plano que deben estar despiertos todo el tiempo.
 
+---
+
+## Bot anunciador (opcional)
+
+Si decides usar `broadcast_bot.py` (ver README para configurarlo), es
+un proceso Python independiente — dale su propio servicio systemd para
+que también se quede corriendo 24/7:
+
+```bash
+sudo nano /etc/systemd/system/telegrambroadcast.service
+```
+
+```ini
+[Unit]
+Description=Bot anunciador de Telegram
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/root/BotAdmin/bot
+ExecStart=/root/BotAdmin/bot/venv/bin/python broadcast_bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable telegrambroadcast
+sudo systemctl start telegrambroadcast
+```
+
+Ambos procesos (`telegrambot` y `telegrambroadcast`) pueden correr al
+mismo tiempo sin problema: usan tokens distintos y comparten la misma
+base de datos solo para leer/escribir la cola de anuncios.
+
+---
+
 *(Esta guía se escribió en julio de 2026; las condiciones de estos
 servicios cambian con frecuencia — conviene revisar la página oficial de
 cada uno antes de decidir.)*

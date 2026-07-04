@@ -5,35 +5,54 @@ Bot profesional de moderación para grupos y supergrupos, construido con
 
 ## Características
 
-- Moderación completa: `/ban`, `/kick`, `/mute` (permanente o temporal),
-  `/unmute`, `/unban`.
-- Gestión de administración: `/admin`, `/unadmin`, `/admins`, `/staff`.
-- Utilidades: `/del`, `/id`, `/ping`, `/info`.
-- Sistema AFK/BRB persistente y eficiente. Escribe `brb` directamente (sin `/`), opcionalmente con un motivo: `brb almorzando`. `/brb` se mantiene como alias.
-- Menú de configuración con botones (`/start` o `/menu`, en privado o dentro del grupo) para administrar bienvenida, despedida, reglamento, AFK, mensajes recurrentes, palabras prohibidas y auto-eliminación sin escribir comandos.
-- **Mensajes recurrentes**: define uno o varios mensajes (texto, foto, video,
-  GIF, documento, audio o nota de voz) con botones en línea opcionales, que
-  se reenvían automáticamente cada cierto intervalo (de 10 minutos a 24
-  horas). Cada uno se puede fijar (pin) al enviarse y/o borrar el anterior
-  antes de publicar el nuevo. Los emojis premium se conservan tal cual
-  (`/addrecurrente`, `/recurrentes`).
+- **Comandos "/" reducidos a lo esencial**: `/admin`, `/unadmin`, `/warn`,
+  `/unwarn`, `/ban`, `/unban`, `/kick`, `/mute`, `/unmute` (y `/start`,
+  `/menu`). Todo lo demás — bienvenida, despedida, reglamento, palabras
+  prohibidas, mensajes recurrentes, auto-eliminar y advertencias — se
+  configura **100% desde el menú de botones**, sin comandos que recordar.
+- **Requisito de permiso**: para poder usar el bot como administrador (menú
+  y comandos), Telegram debe haberte dado el permiso **"Cambiar info del
+  grupo" (Change group info)** además de ser admin. El dueño del grupo
+  siempre tiene control total. Esto evita que administradores "de cortesía"
+  sin permisos reales puedan tocar la configuración del bot.
+- Sistema AFK/BRB persistente y eficiente. Escribe `brb` directamente (sin
+  `/`), opcionalmente con un motivo: `brb almorzando`.
+- Menú de configuración con botones (`/start` o `/menu`, en privado o
+  dentro del grupo) para administrar bienvenida, despedida, reglamento,
+  AFK, mensajes recurrentes, palabras prohibidas, auto-eliminación y
+  advertencias, todo con botones.
+- **Advertencias (warnings)**: `/warn` (respondiendo, con `@usuario` o ID)
+  suma una advertencia; al llegar al límite configurado se aplica
+  automáticamente el castigo elegido (silenciar / expulsar / banear) y se
+  reinicia el contador. `/unwarn` quita una advertencia. El límite, el
+  castigo y la duración del silencio se configuran desde el menú
+  (❗ Advertencias).
+- **Mensajes recurrentes con editor de un solo menú**: define uno o varios
+  mensajes (texto, foto, video, GIF, documento, audio o nota de voz) con
+  botones en línea opcionales, que se reenvían automáticamente cada cierto
+  intervalo (de 10 minutos a 24 horas). Un único panel con un botón para la
+  foto/media, otro para el texto, otro para los botones, el intervalo, fijar
+  y borrar el anterior — y un botón de **👁 Vista previa** para ver
+  exactamente cómo va a quedar antes de guardarlo. Nada de wizards que van
+  mandando mensaje tras mensaje.
 - **Palabras prohibidas**: filtro configurable con castigo (nada / mute con
-  duración / ban) y opción de borrar o no el mensaje, agregando o quitando
-  palabras una por una o varias a la vez (`/agregarpalabra`,
-  `/eliminarpalabra`, `/palabras`).
+  duración / ban) y opción de borrar o no el mensaje. Se agregan/quitan
+  tocando los botones ➕/➖ del menú (🚫 Palabras prohibidas): el bot pide la
+  palabra, la recibes, y vuelve a mostrarte el mismo menú actualizado.
 - **Auto-eliminar**: borra automáticamente el aviso nativo de Telegram al
   entrar/salir un usuario, el aviso de inicio de videollamada, y los
   mensajes que invocan comandos con `/`, todo configurable desde el menú.
 - Bienvenida, despedida y reglamento configurables por grupo, con
-  placeholders y limpieza automática de avisos anteriores (`/setwelcome`,
-  `/welcome`, `/resetwelcome`, `/setgoodbye`, `/goodbye`, `/resetgoodbye`,
-  `/welcomeclean`, `/setrules`, `/rules`, `/resetrules`).
+  placeholders y limpieza automática de avisos anteriores — todo desde el
+  menú (👋 Bienvenida / 🚪 Despedida / 📜 Reglas).
 - Todos los comandos aceptan `@usuario`, ID numérico o respuesta a un mensaje.
 - El propietario del bot nunca puede ser moderado, y solo él puede
   administrar o moderar a otros administradores.
 - Logging completo a archivo y consola; registro de cada acción de
   moderación en base de datos (quién, a quién, cuándo, dónde y por qué).
 - Mensajes en MarkdownV2 con formato profesional y emojis.
+- ¿Quieres hospedarlo gratis para no tenerlo corriendo en tu computadora?
+  Mira **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
 ## Instalación
 
@@ -61,6 +80,12 @@ Bot profesional de moderación para grupos y supergrupos, construido con
 3. Añade el bot a tu grupo/supergrupo y otórgale permisos de administrador
    con, al menos: eliminar mensajes, restringir miembros, promover
    miembros e invitar usuarios.
+
+   **Importante:** además, cada persona que vaya a administrar el bot
+   (aparte del dueño del grupo) necesita tener ella misma el permiso de
+   administrador **"Cambiar info del grupo" (Change group info)**. El bot
+   revisa este permiso específico (no solo "ser admin") antes de dejar
+   usar el menú o los comandos de moderación.
 
 4. Ejecuta el bot:
 
@@ -105,31 +130,35 @@ automáticamente), por lo que es seguro aunque contenga símbolos como
 
 ## Mensajes recurrentes
 
-Se configuran con `/addrecurrente` (dentro del grupo) o desde el menú
-(`/menu` → 🔁 Mensajes recurrentes → ➕ Agregar). El asistente pide, en orden:
+Todo se hace desde el menú: `/menu` → 🔁 Mensajes recurrentes → ➕ Agregar
+(o ✏️ Editar contenido sobre uno ya existente). Se abre **un único panel**
+con un botón por cada parte, y cada vez que llenas un campo vuelves
+automáticamente al mismo panel (no es una fila de preguntas una tras otra):
 
-1. **Contenido**: envía texto o media (foto/video/GIF/documento/audio/nota
-   de voz) con su descripción. Puedes usar negritas, cursivas, enlaces y
-   **emojis premium** — se reenvían exactamente igual.
-2. **Botones** (opcional): con la sintaxis
+| Botón | Qué hace |
+|---|---|
+| 📷 Multimedia | Pide una foto/video/GIF/documento/audio/nota de voz (con descripción opcional). |
+| 📝 Texto | Pide el texto del mensaje (o la descripción, si ya elegiste multimedia). |
+| 🔘 Botones | Pide los botones en línea, o `no` para quitarlos. |
+| ⏱ Intervalo | Elige la frecuencia con botones: 10, 20, 30, 45 min, 1, 2, 3, 4, 6, 8, 12, 18 o 24 h. |
+| 📌 Fijar | Alterna sí/no. |
+| 🗑 Borrar anterior | Alterna sí/no (borra la copia anterior antes de publicar la nueva). |
+| 👁 Vista previa | Envía el mensaje tal cual quedaría, **sin guardarlo**, para que revises el resultado. |
+| 💾 Guardar | Crea o actualiza el mensaje recurrente y lo activa. |
+| ❌ Descartar | Cancela sin guardar los cambios. |
 
-   ```
-   Texto del botón - https://enlace.com
-   Botón A - https://a.com | Botón B - https://b.com
-   ```
+Sintaxis de los botones:
 
-   una fila por línea, botones de la misma fila separados por ` | `. O toca
-   "Sin botones".
-3. **Intervalo**: elige entre 10, 20, 30, 45 minutos, 1, 2, 3, 4, 6, 8, 12,
-   18 o 24 horas.
-4. **Fijar mensaje**: si el bot debe fijarlo (pin) cada vez que lo envía.
-5. **Borrar el anterior**: si el bot debe eliminar la copia anterior de ese
-   mismo recurrente antes de publicar la nueva (para no acumular mensajes).
+```
+Texto del botón - https://enlace.com
+Botón A - https://a.com | Botón B - https://b.com
+```
 
-`/recurrentes` lista todos los mensajes recurrentes del grupo con botones
-para pausar/activar, cambiar el fijado o el borrado del anterior, y
-eliminarlos. Puedes crear tantos como quieras; cada uno corre de forma
-independiente.
+una fila por línea, botones de la misma fila separados por ` | `.
+
+Desde la lista puedes pausar/activar cada mensaje recurrente, cambiar el
+fijado o el borrado del anterior, editarlo de nuevo o eliminarlo. Puedes
+crear tantos como quieras; cada uno corre de forma independiente.
 
 ### Emojis premium — cómo funcionan
 
@@ -144,24 +173,31 @@ configuración adicional.
 
 ## Palabras prohibidas
 
-- `/agregarpalabra <palabra>` — agrega una palabra o frase. Para agregar
-  varias a la vez, ponlas en líneas separadas:
+Desde el menú (`/menu` → 🚫 Palabras prohibidas):
 
-  ```
-  /agregarpalabra palabra1
-  palabra2
-  palabra3
-  ```
-
-- `/eliminarpalabra <palabra>` — igual, pero elimina (una o varias, una por
-  línea).
-- `/palabras` — lista las palabras configuradas.
+- **➕ Agregar palabra(s)**: el bot te pide la(s) palabra(s) (una por
+  línea si son varias); en cuanto las envías, se agregan y vuelves al
+  mismo menú ya actualizado.
+- **➖ Eliminar palabra(s)**: igual, pero elimina.
+- Ambos botones tienen un **❌ Cancelar** por si te arrepientes.
 
 El castigo (nada / silenciar / banear), la duración del silencio y si se
-borra o no el mensaje se configuran desde el menú (`/menu` → 🚫 Palabras
-prohibidas). El propietario y los administradores del grupo nunca son
-afectados por el filtro. La detección es por coincidencia de texto (no
-distingue mayúsculas/minúsculas) dentro del mensaje o del pie de foto.
+borra o no el mensaje se configuran desde ese mismo menú. El propietario y
+los administradores del grupo nunca son afectados por el filtro. La
+detección es por coincidencia de texto (no distingue mayúsculas/minúsculas)
+dentro del mensaje o del pie de foto.
+
+## Advertencias
+
+- `/warn` (respondiendo a un mensaje, con `@usuario` o su ID, y
+  opcionalmente un motivo) suma una advertencia al usuario.
+- `/unwarn` le quita una advertencia.
+- Al llegar al **límite configurado** (3 por defecto), el bot aplica
+  automáticamente el castigo elegido — **silenciar, expulsar o banear** —
+  y reinicia el contador de ese usuario a 0.
+- Desde el menú (`/menu` → ❗ Advertencias) configuras: el límite de
+  advertencias, el castigo automático, y (si el castigo es "silenciar")
+  su duración.
 
 ## Auto-eliminar
 
@@ -177,6 +213,35 @@ independiente:
 Esto es independiente del sistema de Bienvenida/Despedida: uno controla si
 se publica un aviso personalizado, esto controla si se oculta el mensaje
 nativo de Telegram. Se pueden combinar libremente.
+
+## Bot anunciador (opcional): enviar anuncios a todos los grupos
+
+Si quieres avisar algo puntual a **todos los grupos donde está el bot**
+(no confundir con los "mensajes recurrentes", que son por grupo y se
+repiten solos), puedes correr un segundo proceso: `broadcast_bot.py`.
+
+- Es un **bot de Telegram aparte** (necesitas crearlo en @BotFather con
+  otro nombre) que solo tú, el propietario, puedes usar por privado.
+- **No necesita estar agregado a los grupos.** Compone el anuncio con
+  botones (foto, texto, botones en línea, vista previa) y al confirmar
+  lo dice a través de la misma base de datos; el bot de moderación —que
+  sí está en todos los grupos— es quien realmente lo envía, revisando
+  la cola cada 15 segundos.
+
+### Cómo activarlo
+
+1. Crea un segundo bot con [@BotFather](https://t.me/BotFather) (token
+   distinto al del bot de moderación).
+2. Agrega a tu `.env`:
+   ```
+   BROADCAST_BOT_TOKEN=el_token_del_nuevo_bot
+   ```
+3. Córrelo como un proceso aparte (con su propio servicio systemd, ver
+   `DEPLOYMENT.md`):
+   ```bash
+   python broadcast_bot.py
+   ```
+4. Habla con ese bot por privado y usa `/anuncio` (o `/start`).
 
 ## Notas importantes
 
@@ -201,27 +266,34 @@ nativo de Telegram. Se pueden combinar libremente.
 
 ```
 bot/
-├── main.py                 # Punto de entrada, registro de handlers
+├── main.py                 # Punto de entrada; solo registra los comandos "/" básicos
 ├── config.py                # Carga de configuración desde .env
 ├── database.py               # Capa de acceso a datos (SQLite async)
 ├── requirements.txt
 ├── .env
 ├── handlers/
-│   ├── moderation.py         # /ban /kick /mute /unmute /unban
-│   ├── admin.py               # /admin /unadmin /admins /staff
-│   ├── utils_cmds.py           # /del /id /ping /info
-│   ├── afk.py                    # "brb" en texto plano (+ /brb) y detección automática
-│   ├── recurring.py               # Mensajes recurrentes (texto/media/botones/intervalo/pin)
+│   ├── moderation.py         # /ban /kick /mute /unmute /unban /warn /unwarn
+│   ├── admin.py               # /admin /unadmin (admins/staff quedaron sin comando, ver menú)
+│   ├── utils_cmds.py           # /del /id /ping /info (sin comando registrado; código de reserva)
+│   ├── afk.py                    # "brb" en texto plano y detección automática
+│   ├── recurring.py               # Mensajes recurrentes: editor de un solo menú + jobs programados
 │   ├── filters_words.py            # Palabras prohibidas + castigo (mute/ban) + auto-borrado
+│   ├── warnings.py                  # Configuración de advertencias (límite/castigo/duración)
 │   ├── cleanup.py                   # Auto-eliminar avisos de servicio y mensajes de comandos
-│   └── menu.py                       # Menú de botones (/start, /menu)
+│   ├── greetings.py                  # Bienvenida/despedida/reglas (100% vía menú)
+│   └── menu.py                       # Menú de botones (/start, /menu) — panel principal
 ├── utils/
-│   ├── permissions.py         # Reglas de permisos y jerarquía
-│   ├── parsing.py               # Resolución de usuario objetivo
-│   ├── time_parser.py            # Parser de duraciones (10m, 2h, 3d...)
-│   ├── formatting.py              # Helpers MarkdownV2
-│   ├── entities.py                 # Serialización de entities (emojis premium) y botones inline
-│   └── logger.py                    # Configuración de logging
+│   ├── permissions.py         # Reglas de permisos, jerarquía y el requisito can_change_info
+│   ├── callbacks.py            # Decorador @safe_callback: evita botones "cargando" para siempre
+│   ├── parsing.py                # Resolución de usuario objetivo
+│   ├── time_parser.py             # Parser de duraciones (10m, 2h, 3d...)
+│   ├── formatting.py               # Helpers MarkdownV2
+│   ├── entities.py                  # Serialización de entities (emojis premium) y botones inline
+│   └── logger.py                     # Configuración de logging
 └── logs/
     └── bot.log                     # Generado en tiempo de ejecución
 ```
+
+## Hospedar el bot gratis (sin dejarlo corriendo en tu computadora)
+
+Ver **[DEPLOYMENT.md](DEPLOYMENT.md)** para una guía paso a paso.

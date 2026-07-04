@@ -38,6 +38,7 @@ class Settings:
     log_level: str
     del_notice_seconds: int
     logs_dir: Path = field(default_factory=lambda: BASE_DIR / "logs")
+    broadcast_bot_token: str = ""  # Token del bot anunciador (opcional, ver broadcast_bot.py)
 
     def validate(self) -> None:
         if not self.bot_token or ":" not in self.bot_token:
@@ -64,6 +65,7 @@ def load_settings() -> Settings:
         database_path=str(db_full_path),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         del_notice_seconds=int(os.getenv("DEL_NOTICE_SECONDS", "10")),
+        broadcast_bot_token=os.getenv("BROADCAST_BOT_TOKEN", "").strip(),
     )
     settings.validate()
     return settings

@@ -11,9 +11,11 @@ menú de botones (/menu), sin necesidad de recordar ningún comando.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from telegram import BotCommand, Update
+from telegram.error import TelegramError
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -47,11 +49,17 @@ from handlers.moderation import (
     unwarn_command,
     warn_command,
 )
+from handlers.recurring import _send_content as _send_broadcast_content
 from handlers.recurring import load_all_recurring_jobs, recurring_callback, try_consume_draft_input
 from handlers.warnings import warnings_callback
 from utils.logger import setup_logging
 
 logger = logging.getLogger(__name__)
+
+# Cada cuánto se revisa si hay anuncios nuevos encolados por el bot anunciador.
+BROADCAST_POLL_SECONDS = 15
+# Pequeña pausa entre grupo y grupo al difundir, para no saturar la API de Telegram.
+BROADCAST_DELAY_BETWEEN_GROUPS = 0.05
 
 # Lista deliberadamente corta: solo lo esencial. El resto de funciones
 # (bienvenida, despedida, reglas, recurrentes, palabras, auto-eliminar,
@@ -71,6 +79,36 @@ BOT_COMMANDS = [
 ]
 
 
+async def _broadcast_dispatch_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Revisa la cola de anuncios (llenada por el bot anunciador, si lo usas)
+    y envía cada anuncio pendiente a todos los grupos conocidos."""
+    db: Database = context.application.bot_data["db"]
+    pending = await db.get_pending_broadcasts()
+    if not pending:
+        return
+
+    groups = await db.get_known_groups()
+    for broadcast in pending:
+        sent_count = 0
+        failed_count = 0
+        for group_id, _title in groups:
+            try:
+                await _send_broadcast_content(
+                    context, group_id, broadcast.content_type, broadcast.text,
+                    broadcast.entities, broadcast.file_id, broadcast.buttons,
+                )
+                sent_count += 1
+            except TelegramError as exc:
+                failed_count += 1
+                logger.warning("No se pudo enviar el anuncio #%s al grupo %s: %s", broadcast.id, group_id, exc)
+            await asyncio.sleep(BROADCAST_DELAY_BETWEEN_GROUPS)
+        await db.mark_broadcast_sent(broadcast.id, sent_count, failed_count)
+        logger.info(
+            "Anuncio #%s enviado: %d exitosos, %d fallidos de %d grupos.",
+            broadcast.id, sent_count, failed_count, len(groups),
+        )
+
+
 async def post_init(application: Application) -> None:
     db = Database(settings.database_path)
     await db.connect()
@@ -78,6 +116,11 @@ async def post_init(application: Application) -> None:
     application.bot_data["afk_cache"] = await load_afk_cache(db)
     await application.bot.set_my_commands(BOT_COMMANDS)
     await load_all_recurring_jobs(application, db)
+    if application.job_queue is not None:
+        application.job_queue.run_repeating(
+            _broadcast_dispatch_job, interval=BROADCAST_POLL_SECONDS, first=BROADCAST_POLL_SECONDS,
+            name="broadcast_dispatch",
+        )
     logger.info("Bot inicializado correctamente. Propietarios: %s", list(settings.owner_ids))
 
 
