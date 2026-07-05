@@ -107,6 +107,14 @@ CREATE TABLE IF NOT EXISTS warnings (
     PRIMARY KEY (group_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS freed_users (
+    group_id   INTEGER NOT NULL,
+    user_id    INTEGER NOT NULL,
+    freed_by   INTEGER,
+    freed_at   INTEGER NOT NULL,
+    PRIMARY KEY (group_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS broadcast_queue (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     content_type    TEXT NOT NULL,
@@ -711,6 +719,43 @@ class Database:
             "DELETE FROM warnings WHERE group_id = ? AND user_id = ?", (group_id, user_id)
         )
         await self.conn.commit()
+
+    # ------------------------------------------------------------------ #
+    # /free — usuarios exentos del filtro de palabras (y de futuros
+    # filtros automáticos) en un grupo puntual.
+    # ------------------------------------------------------------------ #
+    async def add_freed_user(self, group_id: int, user_id: int, freed_by: int) -> None:
+        await self.conn.execute(
+            """
+            INSERT INTO freed_users (group_id, user_id, freed_by, freed_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(group_id, user_id) DO UPDATE SET
+                freed_by = excluded.freed_by,
+                freed_at = excluded.freed_at
+            """,
+            (group_id, user_id, freed_by, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def remove_freed_user(self, group_id: int, user_id: int) -> bool:
+        cursor = await self.conn.execute(
+            "DELETE FROM freed_users WHERE group_id = ? AND user_id = ?", (group_id, user_id)
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def is_user_freed(self, group_id: int, user_id: int) -> bool:
+        cursor = await self.conn.execute(
+            "SELECT 1 FROM freed_users WHERE group_id = ? AND user_id = ?", (group_id, user_id)
+        )
+        return await cursor.fetchone() is not None
+
+    async def get_freed_users(self, group_id: int) -> list[int]:
+        cursor = await self.conn.execute(
+            "SELECT user_id FROM freed_users WHERE group_id = ? ORDER BY freed_at", (group_id,)
+        )
+        rows = await cursor.fetchall()
+        return [int(row["user_id"]) for row in rows]
 
     # ------------------------------------------------------------------ #
     # Actualización completa de un mensaje recurrente ya existente

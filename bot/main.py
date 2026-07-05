@@ -48,6 +48,7 @@ from handlers.cleanup import (
     on_leave_cleanup,
 )
 from handlers.filters_words import check_banned_words, try_consume_pending_words, words_menu_callback
+from handlers.free import free_command, freelist_command, unfree_command
 from handlers.menu import menu_callback, menu_command, try_consume_pending_input
 from handlers.greetings import on_left_member, on_new_members
 from handlers.moderation import (
@@ -98,6 +99,9 @@ BOT_COMMANDS = [
     BotCommand("id", "Ver tu ID o el de a quien respondas"),
     BotCommand("info", "Ver información de un usuario"),
     BotCommand("ping", "Ver la latencia del bot"),
+    BotCommand("free", "Eximir a un usuario de los filtros del grupo"),
+    BotCommand("unfree", "Quitarle la exención a un usuario"),
+    BotCommand("freelist", "Ver usuarios liberados en este grupo"),
 ]
 
 
@@ -262,6 +266,9 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("id", id_command))
     application.add_handler(CommandHandler("info", info_command))
     application.add_handler(CommandHandler("ping", ping_command))
+    application.add_handler(CommandHandler("free", free_command))
+    application.add_handler(CommandHandler("unfree", unfree_command))
+    application.add_handler(CommandHandler("freelist", freelist_command))
 
     # Router de mensajes libres (texto o media): editor de recurrentes,
     # wizard de palabras prohibidas, ediciones pendientes del menú y "brb".

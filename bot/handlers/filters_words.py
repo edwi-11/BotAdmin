@@ -385,8 +385,10 @@ async def check_banned_words(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not matched:
         return
 
-    # El propietario y los administradores nunca son afectados por el filtro.
-    if is_owner(user.id) or await is_chat_admin(context.bot, chat.id, user.id):
+    # El propietario y los administradores nunca son afectados por el filtro
+    # (como siempre). Además, cualquier usuario liberado con /free tampoco,
+    # aunque no sea administrador.
+    if is_owner(user.id) or await is_chat_admin(context.bot, chat.id, user.id) or await db.is_user_freed(chat.id, user.id):
         return
 
     settings = await db.get_group_settings(chat.id)
