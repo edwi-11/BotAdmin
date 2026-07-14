@@ -49,6 +49,7 @@ from handlers.cleanup import (
 )
 from handlers.filters_words import check_banned_words, try_consume_pending_words, words_menu_callback
 from handlers.free import free_command, freelist_command, unfree_command
+from handlers.gemini_chat import ceo_trigger
 from handlers.menu import menu_callback, menu_command, try_consume_pending_input
 from handlers.greetings import on_left_member, on_new_members
 from handlers.moderation import (
@@ -310,6 +311,13 @@ def build_application() -> Application:
     application.add_handler(
         MessageHandler(filters.ALL & ~filters.StatusUpdate.ALL, track_and_check_afk),
         group=-1,
+    )
+
+    # --- Integración con Gemini: mensajes que empiezan con "ceo" (cualquier
+    # combinación de mayúsc/minúsc), solo en grupos activados ---
+    application.add_handler(
+        MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, ceo_trigger),
+        group=2,
     )
 
     application.add_error_handler(error_handler)

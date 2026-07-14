@@ -39,6 +39,8 @@ class Settings:
     del_notice_seconds: int
     logs_dir: Path = field(default_factory=lambda: BASE_DIR / "logs")
     broadcast_bot_token: str = ""  # Token del bot anunciador (opcional, ver broadcast_bot.py)
+    gemini_api_key: str = ""       # API key de Google AI Studio (opcional, ver handlers/gemini_chat.py)
+    gemini_model: str = "gemini-flash-latest"
 
     def validate(self) -> None:
         if not self.bot_token or ":" not in self.bot_token:
@@ -66,6 +68,8 @@ def load_settings() -> Settings:
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         del_notice_seconds=int(os.getenv("DEL_NOTICE_SECONDS", "10")),
         broadcast_bot_token=os.getenv("BROADCAST_BOT_TOKEN", "").strip(),
+        gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
+        gemini_model=os.getenv("GEMINI_MODEL", "gemini-flash-latest").strip(),
     )
     settings.validate()
     return settings
