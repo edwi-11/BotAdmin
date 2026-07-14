@@ -41,6 +41,8 @@ class Settings:
     broadcast_bot_token: str = ""  # Token del bot anunciador (opcional, ver broadcast_bot.py)
     gemini_api_key: str = ""       # API key de Google AI Studio (opcional, ver handlers/gemini_chat.py)
     gemini_model: str = "gemini-flash-latest"
+    gemini_tts_model: str = "gemini-2.5-flash-preview-tts"
+    gemini_tts_voice: str = "Kore"
 
     def validate(self) -> None:
         if not self.bot_token or ":" not in self.bot_token:
@@ -70,6 +72,8 @@ def load_settings() -> Settings:
         broadcast_bot_token=os.getenv("BROADCAST_BOT_TOKEN", "").strip(),
         gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-flash-latest").strip(),
+        gemini_tts_model=os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts").strip(),
+        gemini_tts_voice=os.getenv("GEMINI_TTS_VOICE", "Kore").strip(),
     )
     settings.validate()
     return settings
