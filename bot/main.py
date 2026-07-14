@@ -40,6 +40,26 @@ from handlers.activation import (
 )
 from handlers.admin import admin_command, unadmin_command
 from handlers.afk import brb_text_trigger, load_afk_cache, track_and_check_afk
+from handlers.economy import (
+    baloncesto_command,
+    bolos_command,
+    cobrar_command,
+    comprar_command,
+    dardos_command,
+    depositar_command,
+    diario_command,
+    futbol_command,
+    ranking_command,
+    renunciar_command,
+    retirar_command,
+    robar_command,
+    saldo_command,
+    tienda_command,
+    trabajo_command,
+    trabajos_command,
+    tragamonedas_command,
+    transferir_command,
+)
 from handlers.cleanup import (
     cleanup_menu_callback,
     on_call_started_cleanup,
@@ -103,6 +123,25 @@ BOT_COMMANDS = [
     BotCommand("free", "Eximir a un usuario de los filtros del grupo"),
     BotCommand("unfree", "Quitarle la exención a un usuario"),
     BotCommand("freelist", "Ver usuarios liberados en este grupo"),
+    # --- Economía ---
+    BotCommand("saldo", "Ver tu perfil económico (o el de otro usuario)"),
+    BotCommand("diario", "Reclamar tu bono diario"),
+    BotCommand("baloncesto", "Jugar baloncesto (1 vez al día)"),
+    BotCommand("futbol", "Jugar fútbol (1 vez al día)"),
+    BotCommand("dardos", "Jugar dardos (1 vez al día)"),
+    BotCommand("bolos", "Jugar bolos (1 vez al día)"),
+    BotCommand("tragamonedas", "Jugar tragamonedas (1 vez al día)"),
+    BotCommand("trabajos", "Ver los empleos disponibles"),
+    BotCommand("trabajo", "Elegir un empleo"),
+    BotCommand("renunciar", "Renunciar a tu empleo actual"),
+    BotCommand("cobrar", "Cobrar el sueldo de tu empleo"),
+    BotCommand("robar", "Intentar robarle monedas a otro usuario"),
+    BotCommand("transferir", "Enviar monedas a otro usuario"),
+    BotCommand("depositar", "Guardar monedas en el banco"),
+    BotCommand("retirar", "Sacar monedas del banco"),
+    BotCommand("tienda", "Ver la tienda de objetos"),
+    BotCommand("comprar", "Comprar un objeto de la tienda"),
+    BotCommand("ranking", "Ver el top de más ricos del grupo"),
 ]
 
 
@@ -270,6 +309,27 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("free", free_command))
     application.add_handler(CommandHandler("unfree", unfree_command))
     application.add_handler(CommandHandler("freelist", freelist_command))
+
+    # --- Economía: juegos, trabajos, robo, banco, tienda, ranking ---
+    application.add_handler(CommandHandler("saldo", saldo_command))
+    application.add_handler(CommandHandler("perfil", saldo_command))
+    application.add_handler(CommandHandler("diario", diario_command))
+    application.add_handler(CommandHandler("baloncesto", baloncesto_command))
+    application.add_handler(CommandHandler("futbol", futbol_command))
+    application.add_handler(CommandHandler("dardos", dardos_command))
+    application.add_handler(CommandHandler("bolos", bolos_command))
+    application.add_handler(CommandHandler("tragamonedas", tragamonedas_command))
+    application.add_handler(CommandHandler("trabajos", trabajos_command))
+    application.add_handler(CommandHandler("trabajo", trabajo_command))
+    application.add_handler(CommandHandler("renunciar", renunciar_command))
+    application.add_handler(CommandHandler("cobrar", cobrar_command))
+    application.add_handler(CommandHandler("robar", robar_command))
+    application.add_handler(CommandHandler("transferir", transferir_command))
+    application.add_handler(CommandHandler("depositar", depositar_command))
+    application.add_handler(CommandHandler("retirar", retirar_command))
+    application.add_handler(CommandHandler("tienda", tienda_command))
+    application.add_handler(CommandHandler("comprar", comprar_command))
+    application.add_handler(CommandHandler("ranking", ranking_command))
 
     # Router de mensajes libres (texto o media): editor de recurrentes,
     # wizard de palabras prohibidas, ediciones pendientes del menú y "brb".

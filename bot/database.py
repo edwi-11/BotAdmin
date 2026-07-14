@@ -115,6 +115,29 @@ CREATE TABLE IF NOT EXISTS freed_users (
     PRIMARY KEY (group_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS economy (
+    group_id      INTEGER NOT NULL,
+    user_id       INTEGER NOT NULL,
+    balance       INTEGER NOT NULL DEFAULT 0,
+    bank          INTEGER NOT NULL DEFAULT 0,
+    xp            INTEGER NOT NULL DEFAULT 0,
+    job           TEXT,
+    shield_until  INTEGER NOT NULL DEFAULT 0,
+    daily_streak  INTEGER NOT NULL DEFAULT 0,
+    last_daily    INTEGER NOT NULL DEFAULT 0,
+    updated_at    INTEGER NOT NULL,
+    PRIMARY KEY (group_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_economy_balance ON economy (group_id, balance);
+
+CREATE TABLE IF NOT EXISTS economy_cooldowns (
+    group_id  INTEGER NOT NULL,
+    user_id   INTEGER NOT NULL,
+    action    TEXT NOT NULL,
+    last_ts   INTEGER NOT NULL,
+    PRIMARY KEY (group_id, user_id, action)
+);
+
 CREATE TABLE IF NOT EXISTS broadcast_queue (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     content_type    TEXT NOT NULL,
@@ -210,6 +233,35 @@ class RecurringMessage:
     last_message_id: Optional[int]
     created_by: int
     created_at: int
+
+
+@dataclass(slots=True)
+class EconomyProfile:
+    group_id: int
+    user_id: int
+    balance: int = 0
+    bank: int = 0
+    xp: int = 0
+    job: Optional[str] = None
+    shield_until: int = 0
+    daily_streak: int = 0
+    last_daily: int = 0
+
+    @property
+    def level(self) -> int:
+        return 1 + self.xp // 100
+
+    @property
+    def xp_into_level(self) -> int:
+        return self.xp % 100
+
+
+def _row_to_economy(row: aiosqlite.Row) -> EconomyProfile:
+    return EconomyProfile(
+        group_id=row["group_id"], user_id=row["user_id"], balance=row["balance"],
+        bank=row["bank"], xp=row["xp"], job=row["job"], shield_until=row["shield_until"],
+        daily_streak=row["daily_streak"], last_daily=row["last_daily"],
+    )
 
 
 @dataclass(slots=True)
@@ -756,6 +808,133 @@ class Database:
         )
         rows = await cursor.fetchall()
         return [int(row["user_id"]) for row in rows]
+
+    # ------------------------------------------------------------------ #
+    # Economía: monedas, banco, XP/nivel, empleo, escudo, cooldowns
+    # ------------------------------------------------------------------ #
+    async def get_economy(self, group_id: int, user_id: int) -> EconomyProfile:
+        cursor = await self.conn.execute(
+            "SELECT * FROM economy WHERE group_id = ? AND user_id = ?", (group_id, user_id)
+        )
+        row = await cursor.fetchone()
+        if row:
+            return _row_to_economy(row)
+        await self.conn.execute(
+            "INSERT INTO economy (group_id, user_id, updated_at) VALUES (?, ?, ?)",
+            (group_id, user_id, int(time.time())),
+        )
+        await self.conn.commit()
+        return EconomyProfile(group_id=group_id, user_id=user_id)
+
+    async def add_balance(self, group_id: int, user_id: int, amount: int) -> int:
+        """Suma (o resta, si amount es negativo) monedas en efectivo. Nunca baja de 0."""
+        await self.get_economy(group_id, user_id)  # asegura que exista la fila
+        await self.conn.execute(
+            """
+            UPDATE economy SET balance = MAX(0, balance + ?), updated_at = ?
+            WHERE group_id = ? AND user_id = ?
+            """,
+            (amount, int(time.time()), group_id, user_id),
+        )
+        await self.conn.commit()
+        profile = await self.get_economy(group_id, user_id)
+        return profile.balance
+
+    async def add_xp(self, group_id: int, user_id: int, amount: int) -> EconomyProfile:
+        await self.get_economy(group_id, user_id)
+        await self.conn.execute(
+            "UPDATE economy SET xp = xp + ?, updated_at = ? WHERE group_id = ? AND user_id = ?",
+            (amount, int(time.time()), group_id, user_id),
+        )
+        await self.conn.commit()
+        return await self.get_economy(group_id, user_id)
+
+    async def set_job(self, group_id: int, user_id: int, job: Optional[str]) -> None:
+        await self.get_economy(group_id, user_id)
+        await self.conn.execute(
+            "UPDATE economy SET job = ?, updated_at = ? WHERE group_id = ? AND user_id = ?",
+            (job, int(time.time()), group_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def bank_deposit(self, group_id: int, user_id: int, amount: int) -> Optional[EconomyProfile]:
+        profile = await self.get_economy(group_id, user_id)
+        if amount <= 0 or amount > profile.balance:
+            return None
+        await self.conn.execute(
+            """
+            UPDATE economy SET balance = balance - ?, bank = bank + ?, updated_at = ?
+            WHERE group_id = ? AND user_id = ?
+            """,
+            (amount, amount, int(time.time()), group_id, user_id),
+        )
+        await self.conn.commit()
+        return await self.get_economy(group_id, user_id)
+
+    async def bank_withdraw(self, group_id: int, user_id: int, amount: int) -> Optional[EconomyProfile]:
+        profile = await self.get_economy(group_id, user_id)
+        if amount <= 0 or amount > profile.bank:
+            return None
+        await self.conn.execute(
+            """
+            UPDATE economy SET balance = balance + ?, bank = bank - ?, updated_at = ?
+            WHERE group_id = ? AND user_id = ?
+            """,
+            (amount, amount, int(time.time()), group_id, user_id),
+        )
+        await self.conn.commit()
+        return await self.get_economy(group_id, user_id)
+
+    async def set_shield(self, group_id: int, user_id: int, until_ts: int) -> None:
+        await self.get_economy(group_id, user_id)
+        await self.conn.execute(
+            "UPDATE economy SET shield_until = ?, updated_at = ? WHERE group_id = ? AND user_id = ?",
+            (until_ts, int(time.time()), group_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def set_daily(self, group_id: int, user_id: int, streak: int, ts: int) -> None:
+        await self.get_economy(group_id, user_id)
+        await self.conn.execute(
+            """
+            UPDATE economy SET daily_streak = ?, last_daily = ?, updated_at = ?
+            WHERE group_id = ? AND user_id = ?
+            """,
+            (streak, ts, int(time.time()), group_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def get_leaderboard(self, group_id: int, limit: int = 10) -> list[EconomyProfile]:
+        cursor = await self.conn.execute(
+            """
+            SELECT * FROM economy WHERE group_id = ?
+            ORDER BY (balance + bank) DESC LIMIT ?
+            """,
+            (group_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [_row_to_economy(r) for r in rows]
+
+    # -- Cooldowns de economía (juegos, trabajo, robo, etc.) --
+    async def get_cooldown(self, group_id: int, user_id: int, action: str) -> int:
+        cursor = await self.conn.execute(
+            "SELECT last_ts FROM economy_cooldowns WHERE group_id = ? AND user_id = ? AND action = ?",
+            (group_id, user_id, action),
+        )
+        row = await cursor.fetchone()
+        return int(row["last_ts"]) if row else 0
+
+    async def set_cooldown(self, group_id: int, user_id: int, action: str, ts: Optional[int] = None) -> None:
+        ts = ts if ts is not None else int(time.time())
+        await self.conn.execute(
+            """
+            INSERT INTO economy_cooldowns (group_id, user_id, action, last_ts)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(group_id, user_id, action) DO UPDATE SET last_ts = excluded.last_ts
+            """,
+            (group_id, user_id, action, ts),
+        )
+        await self.conn.commit()
 
     # ------------------------------------------------------------------ #
     # Actualización completa de un mensaje recurrente ya existente
