@@ -66,6 +66,7 @@ from handlers.cleanup import (
     on_command_cleanup,
     on_join_cleanup,
     on_leave_cleanup,
+    on_pin_cleanup,
 )
 from handlers.filters_words import check_banned_words, try_consume_pending_words, words_menu_callback
 from handlers.free import free_command, freelist_command, unfree_command
@@ -87,7 +88,15 @@ from handlers.moderation import (
 from handlers.recurring import LOCAL_FILE_PREFIX
 from handlers.recurring import _send_content as _send_broadcast_content
 from handlers.recurring import load_all_recurring_jobs, recurring_callback, try_consume_draft_input
-from handlers.utils_cmds import del_command, id_command, info_command, ping_command
+from handlers.utils_cmds import (
+    del_command,
+    id_command,
+    info_command,
+    npin_command,
+    pin_command,
+    ping_command,
+    send_command,
+)
 from handlers.warnings import warnings_callback
 from utils.logger import setup_logging
 
@@ -120,6 +129,9 @@ BOT_COMMANDS = [
     BotCommand("id", "Ver tu ID o el de a quien respondas"),
     BotCommand("info", "Ver información de un usuario"),
     BotCommand("ping", "Ver la latencia del bot"),
+    BotCommand("pin", "Fijar el mensaje respondido (sin notificar)"),
+    BotCommand("npin", "Fijar el mensaje respondido (con notificación)"),
+    BotCommand("send", "Enviar un mensaje o reenviar contenido como el bot"),
     BotCommand("free", "Eximir a un usuario de los filtros del grupo"),
     BotCommand("unfree", "Quitarle la exención a un usuario"),
     BotCommand("freelist", "Ver usuarios liberados en este grupo"),
@@ -306,6 +318,9 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("id", id_command))
     application.add_handler(CommandHandler("info", info_command))
     application.add_handler(CommandHandler("ping", ping_command))
+    application.add_handler(CommandHandler("pin", pin_command))
+    application.add_handler(CommandHandler("npin", npin_command))
+    application.add_handler(CommandHandler("send", send_command))
     application.add_handler(CommandHandler("free", free_command))
     application.add_handler(CommandHandler("unfree", unfree_command))
     application.add_handler(CommandHandler("freelist", freelist_command))
@@ -351,6 +366,9 @@ def build_application() -> Application:
     )
     application.add_handler(
         MessageHandler(filters.StatusUpdate.VIDEO_CHAT_STARTED, on_call_started_cleanup), group=2
+    )
+    application.add_handler(
+        MessageHandler(filters.StatusUpdate.PINNED_MESSAGE, on_pin_cleanup), group=2
     )
 
     # --- Auto-eliminar mensajes con comandos "/" (se ejecuta DESPUÉS de que

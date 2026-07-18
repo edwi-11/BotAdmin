@@ -6,6 +6,8 @@ Eliminación automática de mensajes:
   ("X se unió al grupo").
 - Mensaje de servicio cuando un usuario sale del grupo.
 - Mensaje de servicio cuando se inicia una llamada / videollamada de grupo.
+- Mensaje de servicio de Telegram cuando el bot (u otro admin) fija un
+  mensaje ("X ha fijado un mensaje").
 - Mensajes que invocan comandos con "/" (para mantener el chat limpio;
   el comando se sigue ejecutando normalmente, solo se borra el mensaje
   después de procesarlo).
@@ -72,6 +74,17 @@ async def on_call_started_cleanup(update: Update, context: ContextTypes.DEFAULT_
         await _try_delete(context, chat.id, update.effective_message.message_id)
 
 
+async def on_pin_cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Borra el aviso nativo de Telegram ('X ha fijado un mensaje') que
+    aparece cada vez que se fija algo, sin importar si lo fijó el bot,
+    un admin, u ocurrió por /pin o /npin."""
+    chat = update.effective_chat
+    db = _get_db(context)
+    settings = await db.get_group_settings(chat.id)
+    if settings.delete_pin:
+        await _try_delete(context, chat.id, update.effective_message.message_id)
+
+
 async def on_command_cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Se ejecuta DESPUÉS de que el comando ya fue procesado por su handler
     correspondiente (registrado en un grupo posterior), y borra el mensaje
@@ -101,6 +114,7 @@ async def _cleanup_text(settings) -> str:
         f"👋 Aviso nativo al entrar: {_onoff(settings.delete_join)}\n"
         f"🚪 Aviso nativo al salir: {_onoff(settings.delete_leave)}\n"
         f"📞 Aviso de inicio de llamada: {_onoff(settings.delete_call)}\n"
+        f"📌 Aviso de mensaje fijado: {_onoff(settings.delete_pin)}\n"
         f"⌨️ Mensajes con comandos /: {_onoff(settings.delete_commands)}"
     )
 
@@ -110,6 +124,7 @@ def _build_cleanup_menu(group_id: int, settings) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(f"👋 Entrar: {_onoff(settings.delete_join)}", callback_data=f"c:join:{group_id}")],
         [InlineKeyboardButton(f"🚪 Salir: {_onoff(settings.delete_leave)}", callback_data=f"c:leave:{group_id}")],
         [InlineKeyboardButton(f"📞 Llamada: {_onoff(settings.delete_call)}", callback_data=f"c:call:{group_id}")],
+        [InlineKeyboardButton(f"📌 Fijado: {_onoff(settings.delete_pin)}", callback_data=f"c:pin:{group_id}")],
         [InlineKeyboardButton(f"⌨️ Comandos /: {_onoff(settings.delete_commands)}", callback_data=f"c:cmds:{group_id}")],
         [InlineKeyboardButton("🔙 Volver", callback_data=f"m:main:{group_id}")],
     ]
@@ -120,6 +135,7 @@ _TOGGLE_COLUMNS = {
     "join": "delete_join",
     "leave": "delete_leave",
     "call": "delete_call",
+    "pin": "delete_pin",
     "cmds": "delete_commands",
 }
 

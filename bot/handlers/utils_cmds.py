@@ -1,22 +1,22 @@
 """
 handlers/utils_cmds.py
-Comandos: /del /id /ping /info
+Comandos: /del /id /ping /info /pin /npin /send
 """
 from __future__ import annotations
 
 import logging
 import time
 
-from telegram import Update
+from telegram import MessageEntity, Update
 from telegram.constants import ChatMemberStatus, ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from config import settings
 from database import Database
-from utils.formatting import error, escape_md, mention
+from utils.formatting import error, escape_md, mention, success
 from utils.parsing import resolve_target
-from utils.permissions import check_bot_rights, check_executor_is_admin, is_owner
+from utils.permissions import check_bot_rights, check_executor_is_admin, get_member, is_owner
 
 logger = logging.getLogger(__name__)
 
@@ -145,3 +145,114 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         f"📌 Estado: {escape_md(status_text)}",
     ]
     await message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN_V2)
+
+
+def _text_after_command(message) -> str:
+    """Devuelve el texto que sigue al comando, preservando saltos de línea
+    y espacios (a diferencia de context.args, que colapsa todo por
+    espacios en blanco)."""
+    text = message.text or ""
+    if message.entities:
+        for ent in message.entities:
+            if ent.type == MessageEntity.BOT_COMMAND and ent.offset == 0:
+                return text[ent.length:].lstrip()
+    parts = text.split(maxsplit=1)
+    return parts[1] if len(parts) > 1 else ""
+
+
+async def _pin_command(update: Update, context: ContextTypes.DEFAULT_TYPE, *, notify: bool) -> None:
+    message = update.effective_message
+    chat = update.effective_chat
+    executor = update.effective_user
+
+    if chat.type not in ("group", "supergroup"):
+        await message.reply_text(error("Este comando solo funciona en grupos."))
+        return
+
+    executor_check = await check_executor_is_admin(context.bot, chat.id, executor.id)
+    if not executor_check.allowed:
+        await message.reply_text(error(executor_check.reason))
+        return
+
+    if not message.reply_to_message:
+        await message.reply_text(error("Debes usar este comando respondiendo al mensaje que quieres fijar."))
+        return
+
+    me = await context.bot.get_me()
+    bot_member = await get_member(context.bot, chat.id, me.id)
+    if bot_member is None or not getattr(bot_member, "can_pin_messages", False):
+        await message.reply_text(
+            error("Al bot le falta el permiso de administrador «Fijar mensajes».")
+        )
+        return
+
+    try:
+        await context.bot.pin_chat_message(
+            chat.id, message.reply_to_message.message_id, disable_notification=not notify
+        )
+    except TelegramError as exc:
+        await message.reply_text(error(f"No pude fijar el mensaje: {escape_md(str(exc))}"))
+        return
+
+    aviso = "con notificación" if notify else "sin notificación"
+    await message.reply_text(success(f"📌 Mensaje fijado ({aviso})."))
+
+
+async def pin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Fija el mensaje respondido SIN notificar a los miembros del grupo."""
+    await _pin_command(update, context, notify=False)
+
+
+async def npin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Fija el mensaje respondido notificando a los miembros del grupo."""
+    await _pin_command(update, context, notify=True)
+
+
+async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Envía un mensaje como si lo hubiera escrito el bot. Dos formas de uso:
+      - /send <texto>                   -> el bot envía ese texto.
+      - responder a un mensaje/foto/    -> el bot reenvía ese contenido tal
+        video/documento con /send          cual (sin la etiqueta "Reenviado de").
+    Si se responde a un mensaje Y además se escribe texto tras /send, ese
+    texto se usa como pie de foto/caption (solo aplica a contenido multimedia).
+    """
+    message = update.effective_message
+    chat = update.effective_chat
+    executor = update.effective_user
+
+    if chat.type not in ("group", "supergroup"):
+        await message.reply_text(error("Este comando solo funciona en grupos."))
+        return
+
+    executor_check = await check_executor_is_admin(context.bot, chat.id, executor.id)
+    if not executor_check.allowed:
+        await message.reply_text(error(executor_check.reason))
+        return
+
+    text_after = _text_after_command(message)
+    reply = message.reply_to_message
+
+    try:
+        if reply:
+            await context.bot.copy_message(
+                chat_id=chat.id,
+                from_chat_id=chat.id,
+                message_id=reply.message_id,
+                caption=text_after or None,
+            )
+        else:
+            if not text_after:
+                await message.reply_text(
+                    error("Escribe un mensaje después de /send, o responde a un mensaje/foto con /send.")
+                )
+                return
+            await context.bot.send_message(chat.id, text_after)
+    except TelegramError as exc:
+        await message.reply_text(error(f"No pude enviar el mensaje: {escape_md(str(exc))}"))
+        return
+
+    try:
+        await context.bot.delete_message(chat.id, message.message_id)
+    except TelegramError:
+        pass  # Si no se pudo borrar (falta permiso), no es crítico.

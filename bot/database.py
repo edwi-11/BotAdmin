@@ -163,6 +163,7 @@ _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("delete_join", "INTEGER NOT NULL DEFAULT 0"),
         ("delete_leave", "INTEGER NOT NULL DEFAULT 0"),
         ("delete_call", "INTEGER NOT NULL DEFAULT 0"),
+        ("delete_pin", "INTEGER NOT NULL DEFAULT 0"),
         ("delete_commands", "INTEGER NOT NULL DEFAULT 0"),
         ("filter_punishment", "TEXT NOT NULL DEFAULT 'none'"),
         ("filter_mute_seconds", "INTEGER NOT NULL DEFAULT 0"),
@@ -208,6 +209,7 @@ class GroupSettings:
     delete_join: bool = False
     delete_leave: bool = False
     delete_call: bool = False
+    delete_pin: bool = False
     delete_commands: bool = False
     filter_punishment: str = "none"     # none | mute | ban
     filter_mute_seconds: int = 0        # 0 = mute permanente
@@ -486,7 +488,7 @@ class Database:
     _SETTINGS_COLUMNS = {
         "welcome_enabled", "welcome_text", "goodbye_enabled",
         "goodbye_text", "rules_text", "clean_welcome", "afk_enabled",
-        "delete_join", "delete_leave", "delete_call", "delete_commands",
+        "delete_join", "delete_leave", "delete_call", "delete_pin", "delete_commands",
         "filter_punishment", "filter_mute_seconds", "filter_delete",
         "warn_limit", "warn_action", "warn_mute_seconds",
     }
@@ -511,6 +513,7 @@ class Database:
             delete_join=bool(row["delete_join"]) if "delete_join" in keys and row["delete_join"] is not None else False,
             delete_leave=bool(row["delete_leave"]) if "delete_leave" in keys and row["delete_leave"] is not None else False,
             delete_call=bool(row["delete_call"]) if "delete_call" in keys and row["delete_call"] is not None else False,
+            delete_pin=bool(row["delete_pin"]) if "delete_pin" in keys and row["delete_pin"] is not None else False,
             delete_commands=bool(row["delete_commands"]) if "delete_commands" in keys and row["delete_commands"] is not None else False,
             filter_punishment=(row["filter_punishment"] if "filter_punishment" in keys and row["filter_punishment"] else "none"),
             filter_mute_seconds=(row["filter_mute_seconds"] if "filter_mute_seconds" in keys and row["filter_mute_seconds"] is not None else 0),
