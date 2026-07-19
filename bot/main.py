@@ -26,6 +26,7 @@ from telegram.ext import (
     ChatMemberHandler,
     CommandHandler,
     ContextTypes,
+    InlineQueryHandler,
     MessageHandler,
     filters,
 )
@@ -72,6 +73,7 @@ from handlers.filters_words import check_banned_words, try_consume_pending_words
 from handlers.free import free_command, freelist_command, unfree_command
 from handlers.gemini_chat import ceo_trigger
 from handlers.menu import menu_callback, menu_command, try_consume_pending_input
+from utils.message_log import track_message
 from handlers.greetings import on_left_member, on_new_members
 from handlers.moderation import (
     ban_command,
@@ -89,6 +91,12 @@ from handlers.recurring import LOCAL_FILE_PREFIX
 from handlers.recurring import _send_content as _send_broadcast_content
 from handlers.recurring import load_all_recurring_jobs, recurring_callback, try_consume_draft_input
 from handlers.quote_sticker import q_command
+from handlers.secret_messages import (
+    handle_secret_start_deeplink,
+    secret_callback,
+    secret_inline_query,
+    try_consume_pending_secret_edit,
+)
 from handlers.utils_cmds import (
     del_command,
     id_command,
@@ -254,6 +262,8 @@ async def post_shutdown(application: Application) -> None:
 async def on_message_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Router para mensajes sin comando (texto o media):
+    0) Si el autor de un mensaje secreto está mandando el texto editado
+       (en el chat privado con el bot), se consume aquí.
     1) Si el editor de mensajes recurrentes está esperando un campo
        (foto/texto/botones), se consume aquí.
     2) Si el usuario está agregando/eliminando palabras prohibidas, se consume aquí.
@@ -261,6 +271,8 @@ async def on_message_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
        (ej. estaba escribiendo el nuevo mensaje de bienvenida), se consume aquí.
     4) Si no, se comprueba si el mensaje es un disparador "brb" en texto plano.
     """
+    if await try_consume_pending_secret_edit(update, context):
+        return
     if await try_consume_draft_input(update, context):
         return
     if await try_consume_pending_words(update, context):
@@ -268,6 +280,15 @@ async def on_message_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if await try_consume_pending_input(update, context):
         return
     await brb_text_trigger(update, context)
+
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/start normal -> abre el menú. /start secedit_<id> (deep link usado
+    por el botón "Editar mensaje" de un mensaje secreto) -> se desvía para
+    pedir el texto nuevo en vez de mostrar el menú."""
+    if await handle_secret_start_deeplink(update, context):
+        return
+    await menu_command(update, context)
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -290,18 +311,31 @@ def build_application() -> Application:
     application.add_handler(
         MessageHandler(filters.COMMAND & filters.ChatType.GROUPS, group_gate), group=-3
     )
+
+    # --- Historial en memoria para /q N y /q r ---
+    # Se registra bien temprano (grupo -4) y para TODOS los mensajes de
+    # grupo, sin filtrar por comando ni por texto, para que /q pueda citar
+    # mensajes anteriores (incluida media sin texto) aunque otro handler ya
+    # los haya procesado.
+    application.add_handler(
+        MessageHandler(filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL, track_message), group=-4
+    )
     application.add_handler(ChatMemberHandler(on_bot_membership_change, ChatMemberHandler.MY_CHAT_MEMBER))
     application.add_handler(CommandHandler("activar", activar_command))
     application.add_handler(CommandHandler("desactivar", desactivar_command))
 
     # --- Menú de configuración con botones (todo pasa por aquí) ---
-    application.add_handler(CommandHandler("start", menu_command))
+    application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("menu", menu_command))
     application.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^m:"))
     application.add_handler(CallbackQueryHandler(recurring_callback, pattern=r"^r:"))
     application.add_handler(CallbackQueryHandler(words_menu_callback, pattern=r"^w:"))
     application.add_handler(CallbackQueryHandler(cleanup_menu_callback, pattern=r"^c:"))
     application.add_handler(CallbackQueryHandler(warnings_callback, pattern=r"^aw:"))
+
+    # --- Mensajes secretos (modo en línea, estilo @mensajesecretobot) ---
+    application.add_handler(InlineQueryHandler(secret_inline_query))
+    application.add_handler(CallbackQueryHandler(secret_callback, pattern=r"^sec:"))
 
     # --- Moderación básica (los únicos comandos "/" que quedan) ---
     application.add_handler(CommandHandler("ban", ban_command))

@@ -152,6 +152,25 @@ CREATE TABLE IF NOT EXISTS broadcast_queue (
     sent_count      INTEGER NOT NULL DEFAULT 0,
     failed_count    INTEGER NOT NULL DEFAULT 0
 );
+
+-- Mensajes secretos enviados por modo en línea (@bot @usuario texto),
+-- al estilo @mensajesecretobot. `targets` guarda los @usuarios permitidos
+-- separados por comas (en minúsculas, sin @). `text` se pone en NULL en
+-- cuanto un mensaje autodestructivo es leído por alguien autorizado.
+CREATE TABLE IF NOT EXISTS secret_messages (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    inline_message_id TEXT,
+    author_id         INTEGER NOT NULL,
+    author_name       TEXT NOT NULL,
+    author_username   TEXT,
+    targets           TEXT NOT NULL,
+    text              TEXT,
+    self_destruct     INTEGER NOT NULL DEFAULT 0,
+    created_at        INTEGER NOT NULL,
+    read_at           INTEGER,
+    read_by_id        INTEGER,
+    read_by_name      TEXT
+);
 """
 
 # Columnas que se añadieron después de la primera versión del esquema.
@@ -288,6 +307,42 @@ def _row_to_broadcast(row: aiosqlite.Row) -> BroadcastMessage:
         entities=row["entities"], file_id=row["file_id"], buttons=row["buttons"],
         status=row["status"], created_by=row["created_by"], created_at=row["created_at"],
         sent_at=row["sent_at"], sent_count=row["sent_count"], failed_count=row["failed_count"],
+    )
+
+
+@dataclass(slots=True)
+class SecretMessage:
+    id: int
+    inline_message_id: Optional[str]
+    author_id: int
+    author_name: str
+    author_username: Optional[str]
+    targets: list[str]
+    text: Optional[str]
+    self_destruct: bool
+    created_at: int
+    read_at: Optional[int]
+    read_by_id: Optional[int]
+    read_by_name: Optional[str]
+
+    @property
+    def is_read(self) -> bool:
+        return self.read_at is not None
+
+    @property
+    def is_destroyed(self) -> bool:
+        return self.self_destruct and self.is_read
+
+
+def _row_to_secret_message(row: aiosqlite.Row) -> SecretMessage:
+    raw_targets = row["targets"] or ""
+    targets = [t for t in raw_targets.split(",") if t]
+    return SecretMessage(
+        id=row["id"], inline_message_id=row["inline_message_id"],
+        author_id=row["author_id"], author_name=row["author_name"],
+        author_username=row["author_username"], targets=targets, text=row["text"],
+        self_destruct=bool(row["self_destruct"]), created_at=row["created_at"],
+        read_at=row["read_at"], read_by_id=row["read_by_id"], read_by_name=row["read_by_name"],
     )
 
 
@@ -994,6 +1049,76 @@ class Database:
             WHERE id = ?
             """,
             (int(time.time()), sent_count, failed_count, broadcast_id),
+        )
+        await self.conn.commit()
+
+    # ------------------------------------------------------------------ #
+    # Mensajes secretos (modo en línea, estilo @mensajesecretobot)
+    # ------------------------------------------------------------------ #
+    async def create_secret_message(
+        self, author_id: int, author_name: str, author_username: Optional[str],
+        targets: list[str], text: str, self_destruct: bool,
+    ) -> int:
+        clean_targets = ",".join(sorted({t.lstrip("@").lower() for t in targets if t}))
+        cursor = await self.conn.execute(
+            """
+            INSERT INTO secret_messages
+                (inline_message_id, author_id, author_name, author_username,
+                 targets, text, self_destruct, created_at)
+            VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                author_id, author_name, author_username.lower() if author_username else None,
+                clean_targets, text, int(self_destruct), int(time.time()),
+            ),
+        )
+        await self.conn.commit()
+        return cursor.lastrowid
+
+    async def get_secret_message(self, secret_id: int) -> Optional[SecretMessage]:
+        cursor = await self.conn.execute(
+            "SELECT * FROM secret_messages WHERE id = ?", (secret_id,)
+        )
+        row = await cursor.fetchone()
+        return _row_to_secret_message(row) if row else None
+
+    async def save_inline_message_id(self, secret_id: int, inline_message_id: str) -> None:
+        """El modo en línea no nos dice dónde quedó el mensaje al enviarse;
+        recién lo sabemos cuando llega el primer callback (botón tocado),
+        así que lo guardamos ahí para poder editarlo más adelante (ej. desde
+        el chat privado, al usar '✏️ Editar mensaje')."""
+        await self.conn.execute(
+            "UPDATE secret_messages SET inline_message_id = COALESCE(inline_message_id, ?) WHERE id = ?",
+            (inline_message_id, secret_id),
+        )
+        await self.conn.commit()
+
+    async def mark_secret_read(
+        self, secret_id: int, reader_id: int, reader_name: str, wipe_text: bool,
+    ) -> None:
+        if wipe_text:
+            await self.conn.execute(
+                """
+                UPDATE secret_messages
+                SET read_at = ?, read_by_id = ?, read_by_name = ?, text = NULL
+                WHERE id = ?
+                """,
+                (int(time.time()), reader_id, reader_name, secret_id),
+            )
+        else:
+            await self.conn.execute(
+                """
+                UPDATE secret_messages
+                SET read_at = ?, read_by_id = ?, read_by_name = ?
+                WHERE id = ?
+                """,
+                (int(time.time()), reader_id, reader_name, secret_id),
+            )
+        await self.conn.commit()
+
+    async def update_secret_text(self, secret_id: int, text: str) -> None:
+        await self.conn.execute(
+            "UPDATE secret_messages SET text = ? WHERE id = ?", (text, secret_id),
         )
         await self.conn.commit()
 
