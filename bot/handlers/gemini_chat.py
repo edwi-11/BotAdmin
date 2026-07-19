@@ -20,6 +20,14 @@ Requiere GEMINI_API_KEY configurada en el .env (ver README para sacar una
 key gratis en https://aistudio.google.com/apikey). Si no está configurada,
 el trigger simplemente no hace nada (no rompe el bot).
 
+RESPALDO AUTOMÁTICO CON GROQ: si Gemini falla (por ejemplo, se acabó la
+cuota gratuita del día), y hay una GROQ_API_KEY configurada en el .env
+(gratis, sin tarjeta, en https://console.groq.com/keys), el bot reintenta
+automáticamente la misma pregunta con Groq (modelo Llama) para no quedarse
+sin responder. Esto solo aplica al chat de TEXTO; el audio ("ceo audio")
+sigue dependiendo únicamente de Gemini, ya que Groq no ofrece un TTS
+equivalente en este flujo.
+
 La función de audio además requiere tener `ffmpeg` instalado en el
 servidor (para convertir el audio crudo que devuelve Gemini al formato
 OGG/Opus que exige Telegram para notas de voz):
@@ -54,6 +62,7 @@ _TRIGGER_RE = re.compile(r"^\s*ceo\b[\s,:.\-]*", re.IGNORECASE)
 _AUDIO_RE = re.compile(r"^audio\b[\s,:.\-]*", re.IGNORECASE)
 
 _GEMINI_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+_GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 _SYSTEM_PROMPT = (
     "Eres 'CEO', un integrante más de un grupo de Telegram, no un asistente formal. "
@@ -105,6 +114,60 @@ async def _ask_gemini(prompt: str) -> str:
         finish_reason = data.get("candidates", [{}])[0].get("finishReason") if data.get("candidates") else None
         logger.warning("Respuesta inesperada de Gemini (finishReason=%s): %s", finish_reason, data)
         raise GeminiError("Respuesta vacía o bloqueada por Gemini") from exc
+
+
+async def _ask_groq(prompt: str) -> str:
+    """Respaldo gratuito (sin tarjeta) cuando Gemini falla o se quedó sin
+    cuota. Usa la API de Groq, compatible con el formato de OpenAI."""
+    if not settings.groq_api_key:
+        raise GeminiError("Groq no está configurado (falta GROQ_API_KEY en el .env)")
+
+    payload = {
+        "model": settings.groq_model,
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.9,
+        "max_tokens": 1000,
+    }
+    headers = {"Authorization": f"Bearer {settings.groq_api_key}"}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(_GROQ_URL, headers=headers, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+
+    try:
+        text = data["choices"][0]["message"]["content"].strip()
+        if not text:
+            raise KeyError("texto vacío")
+        return text
+    except (KeyError, IndexError, TypeError) as exc:
+        logger.warning("Respuesta inesperada de Groq: %s", data)
+        raise GeminiError("Respuesta vacía o bloqueada por Groq") from exc
+
+
+async def _ask_ai(prompt: str) -> str:
+    """Intenta responder con Gemini primero. Si falla por CUALQUIER motivo
+    (cuota agotada, error de red, respuesta bloqueada, etc.), o si Gemini
+    ni siquiera está configurado, y hay una GROQ_API_KEY configurada,
+    reintenta automáticamente con Groq antes de rendirse. Así el bot casi
+    nunca se queda "mudo" por falta de cuota."""
+    if not settings.gemini_api_key:
+        return await _ask_groq(prompt)
+
+    try:
+        return await _ask_gemini(prompt)
+    except Exception as gemini_exc:  # noqa: BLE001
+        if not settings.groq_api_key:
+            raise
+        logger.info("Gemini falló (%s), usando respaldo Groq...", gemini_exc)
+        try:
+            return await _ask_groq(prompt)
+        except Exception as groq_exc:  # noqa: BLE001
+            logger.warning("El respaldo de Groq también falló: %s", groq_exc)
+            raise groq_exc from gemini_exc
 
 
 # --------------------------------------------------------------------- #
@@ -216,8 +279,8 @@ async def ceo_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not match:
         return
 
-    if not settings.gemini_api_key:
-        return  # función no configurada todavía: ignorar en silencio
+    if not settings.gemini_api_key and not settings.groq_api_key:
+        return  # función no configurada todavía (ni Gemini ni Groq): ignorar en silencio
 
     db: Database = context.application.bot_data["db"]
     if not await db.is_group_activated(chat.id):
@@ -241,9 +304,9 @@ async def ceo_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         pass
 
     try:
-        answer = await _ask_gemini(question)
+        answer = await _ask_ai(question)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Error consultando Gemini: %s", exc)
+        logger.warning("Error consultando la IA (Gemini + Groq): %s", exc)
         await message.reply_text("😅 Se me trabó la cabeza justo ahora, intenta de nuevo en un ratito.")
         return
 

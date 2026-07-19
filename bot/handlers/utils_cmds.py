@@ -14,7 +14,7 @@ from telegram.ext import ContextTypes
 
 from config import settings
 from database import Database
-from utils.formatting import error, escape_md, mention, success
+from utils.formatting import error, escape_md, mention
 from utils.parsing import resolve_target
 from utils.permissions import check_bot_rights, check_executor_is_admin, get_member, is_owner
 
@@ -193,9 +193,6 @@ async def _pin_command(update: Update, context: ContextTypes.DEFAULT_TYPE, *, no
     except TelegramError as exc:
         await message.reply_text(error(f"No pude fijar el mensaje: {escape_md(str(exc))}"))
         return
-
-    aviso = "con notificación" if notify else "sin notificación"
-    await message.reply_text(success(f"📌 Mensaje fijado ({aviso})."))
 
 
 async def pin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

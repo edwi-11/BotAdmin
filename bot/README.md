@@ -93,6 +93,34 @@ Bot profesional de moderación para grupos y supergrupos, construido con
    python main.py
    ```
 
+## Chat con IA ("ceo") y respaldo automático con Groq
+
+Escribiendo un mensaje que empieza con "ceo" (ej. "ceo cuéntame un chiste")
+en un grupo activado, el bot responde usando IA. También soporta notas de
+voz reales con "ceo audio: <texto>".
+
+1. Consigue una API key gratis de Gemini en
+   [aistudio.google.com/apikey](https://aistudio.google.com/apikey) y
+   agrégala a tu `.env`:
+   ```
+   GEMINI_API_KEY=tu_api_key_de_gemini
+   ```
+
+2. **(Recomendado) Respaldo gratuito con Groq:** el free tier de Gemini
+   tiene un límite diario de solicitudes bastante ajustado. Si lo agotas,
+   en vez de que el bot se quede sin responder, puedes configurar un
+   segundo proveedor 100% gratis (sin tarjeta) como respaldo automático:
+   ```
+   GROQ_API_KEY=tu_api_key_de_groq
+   ```
+   Consíguela gratis, sin tarjeta, en
+   [console.groq.com/keys](https://console.groq.com/keys). A partir de
+   ahí, cada vez que Gemini falle (por cuota agotada o cualquier otro
+   error), el bot reintenta automáticamente la misma pregunta con Groq
+   (modelo `llama-3.3-70b-versatile` por defecto, configurable con
+   `GROQ_MODEL`) antes de darse por vencido. Esto solo aplica al chat de
+   texto; el audio ("ceo audio") sigue dependiendo únicamente de Gemini.
+
 ## Bienvenida / Despedida / Reglamento
 
 Comandos (solo administradores, excepto `/rules` que cualquiera puede usar):

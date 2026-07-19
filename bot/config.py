@@ -43,6 +43,8 @@ class Settings:
     gemini_model: str = "gemini-flash-latest"
     gemini_tts_model: str = "gemini-2.5-flash-preview-tts"
     gemini_tts_voice: str = "Kore"
+    groq_api_key: str = ""         # Respaldo gratuito cuando Gemini se queda sin cuota (opcional, ver https://console.groq.com/keys)
+    groq_model: str = "llama-3.3-70b-versatile"
 
     def validate(self) -> None:
         if not self.bot_token or ":" not in self.bot_token:
@@ -74,6 +76,8 @@ def load_settings() -> Settings:
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-flash-latest").strip(),
         gemini_tts_model=os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts").strip(),
         gemini_tts_voice=os.getenv("GEMINI_TTS_VOICE", "Kore").strip(),
+        groq_api_key=os.getenv("GROQ_API_KEY", "").strip(),
+        groq_model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip(),
     )
     settings.validate()
     return settings
