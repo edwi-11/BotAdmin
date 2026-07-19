@@ -64,14 +64,16 @@ async def donar_amount_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if query is None or query.data is None:
         return
 
+    logger.info("donar_amount_callback disparado con data=%r", query.data)
+
     try:
         amount = int(query.data.split(":", 1)[1])
     except (IndexError, ValueError):
-        await query.answer()
+        await query.answer("⚠️ Monto inválido.", show_alert=True)
         return
 
     if amount not in _AMOUNTS:
-        await query.answer()
+        await query.answer("⚠️ Monto inválido.", show_alert=True)
         return
 
     await query.answer()
@@ -87,11 +89,16 @@ async def donar_amount_callback(update: Update, context: ContextTypes.DEFAULT_TY
             currency="XTR",
             prices=[LabeledPrice(f"{amount} Stars", amount)],
         )
-    except TelegramError as exc:
-        logger.warning("Error enviando la factura de donación: %s", exc)
-        await context.bot.send_message(
-            chat_id, "⚠️ No pude generar la donación ahora mismo, intenta de nuevo en un momento."
-        )
+    except Exception as exc:  # noqa: BLE001 — atrapamos TODO para que nunca falle en silencio
+        logger.exception("Error enviando la factura de donación (%s Stars): %s", amount, exc)
+        try:
+            await context.bot.send_message(
+                chat_id,
+                f"⚠️ No pude generar la donación: <code>{type(exc).__name__}: {exc}</code>",
+                parse_mode="HTML",
+            )
+        except TelegramError:
+            pass
 
 
 async def donar_precheckout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
