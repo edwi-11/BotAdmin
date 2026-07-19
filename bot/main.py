@@ -92,6 +92,7 @@ from handlers.recurring import LOCAL_FILE_PREFIX
 from handlers.recurring import _send_content as _send_broadcast_content
 from handlers.recurring import load_all_recurring_jobs, recurring_callback, try_consume_draft_input
 from handlers.quote_sticker import q_command
+from handlers.owner_groups import grupos_command
 from handlers.donations import (
     donar_amount_callback,
     donar_command,
@@ -349,6 +350,9 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(donar_amount_callback, pattern=r"^donar:"))
     application.add_handler(PreCheckoutQueryHandler(donar_precheckout_callback))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, donar_successful_payment))
+
+    # --- Lista de grupos + links de invitación (solo el propietario) ---
+    application.add_handler(CommandHandler("grupos", grupos_command))
 
     # --- Moderación básica (los únicos comandos "/" que quedan) ---
     application.add_handler(CommandHandler("ban", ban_command))
