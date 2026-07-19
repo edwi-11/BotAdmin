@@ -29,6 +29,7 @@ from __future__ import annotations
 import io
 import logging
 import random
+import unicodedata
 from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
@@ -64,6 +65,61 @@ def _load_font(paths: list[str], size: int) -> ImageFont.FreeTypeFont:
             continue
     logger.warning("No se encontró ninguna fuente TrueType, usando la fuente por defecto de Pillow (se verá fea).")
     return ImageFont.load_default()
+
+
+# --------------------------------------------------------------------- #
+# Saneo de texto Unicode
+# --------------------------------------------------------------------- #
+# Mucha gente en Telegram usa "generadores de letras bonitas" (𝓐𝓵𝓮𝔁,
+# 𝕁𝕦𝕒𝕟, Ⓐℓɛx, etc.) o pone emojis en su nombre. Esos caracteres viven en
+# bloques Unicode que la fuente DejaVu Sans no tiene dibujados, así que
+# Pillow los muestra como un cuadradito ("tofu"). Para evitarlo:
+#   1. Normalizamos con NFKC, que convierte la mayoría de esas letras
+#      "decorativas" de vuelta a su letra latina/cirílica normal
+#      (𝓙𝓾𝓪𝓷 -> Juan), porque Unicode las define como una variante de
+#      compatibilidad de la letra base.
+#   2. Lo que sigue sin ser dibujable (emojis, símbolos pictográficos,
+#      caracteres de control/formato) se descarta en vez de dejarlo
+#      convertirse en un cuadrado feo.
+_STRIP_CATEGORIES = {"Cc", "Cf", "Co", "Cs"}  # control, formato, uso privado, sustitutos
+
+_EMOJI_RANGES: list[tuple[int, int]] = [
+    (0x1F000, 0x1FFFF),  # emojis, pictogramas, banderas, cartas, etc.
+    (0x2600, 0x27BF),    # símbolos diversos / dingbats (☀ ✔ etc.)
+    (0x2B00, 0x2BFF),    # flechas y símbolos diversos (⭐ ⬛ etc.)
+    (0xFE00, 0xFE0F),    # selectores de variación de emoji
+]
+
+
+def _is_emoji_codepoint(code: int) -> bool:
+    return any(start <= code <= end for start, end in _EMOJI_RANGES)
+
+
+def _sanitize_text(text: str, *, max_combining: int = 2) -> str:
+    normalized = unicodedata.normalize("NFKC", text)
+
+    cleaned: list[str] = []
+    combining_run = 0
+    for ch in normalized:
+        category = unicodedata.category(ch)
+        code = ord(ch)
+
+        if category in _STRIP_CATEGORIES or _is_emoji_codepoint(code):
+            continue
+
+        if category in ("Mn", "Me"):
+            # Deja pasar acentos normales (ej. vietnamita), pero corta las
+            # cadenas larguísimas de marcas combinantes ("texto zalgo")
+            # que Pillow no sabe apilar y termina dibujando como basura.
+            combining_run += 1
+            if combining_run > max_combining:
+                continue
+        else:
+            combining_run = 0
+
+        cleaned.append(ch)
+
+    return "".join(cleaned).strip()
 
 
 # --------------------------------------------------------------------- #
@@ -308,6 +364,10 @@ async def q_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             error("Ese mensaje no tiene texto para citar (por ahora /q no incluye fotos/videos sin texto).")
         )
         return
+    text = _sanitize_text(text)
+    if not text:
+        await message.reply_text(error("No pude leer ese texto (son puros caracteres/emojis que no puedo dibujar)."))
+        return
     if len(text) > 1200:
         text = text[:1200]  # protección extra; _wrap_and_truncate ya recorta visualmente
 
@@ -320,6 +380,8 @@ async def q_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         name = "Usuario"
         user_id = 0
+
+    name = _sanitize_text(name) or "Usuario"
 
     bg, as_image = _parse_args(context.args or [])
 
