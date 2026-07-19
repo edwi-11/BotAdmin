@@ -88,6 +88,7 @@ from handlers.moderation import (
 from handlers.recurring import LOCAL_FILE_PREFIX
 from handlers.recurring import _send_content as _send_broadcast_content
 from handlers.recurring import load_all_recurring_jobs, recurring_callback, try_consume_draft_input
+from handlers.quote_sticker import q_command
 from handlers.utils_cmds import (
     del_command,
     id_command,
@@ -132,6 +133,7 @@ BOT_COMMANDS = [
     BotCommand("pin", "Fijar el mensaje respondido (sin notificar)"),
     BotCommand("npin", "Fijar el mensaje respondido (con notificación)"),
     BotCommand("send", "Enviar un mensaje o reenviar contenido como el bot"),
+    BotCommand("q", "Citar el mensaje respondido como sticker"),
     BotCommand("free", "Eximir a un usuario de los filtros del grupo"),
     BotCommand("unfree", "Quitarle la exención a un usuario"),
     BotCommand("freelist", "Ver usuarios liberados en este grupo"),
@@ -321,6 +323,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("pin", pin_command))
     application.add_handler(CommandHandler("npin", npin_command))
     application.add_handler(CommandHandler("send", send_command))
+    application.add_handler(CommandHandler("q", q_command))
     application.add_handler(CommandHandler("free", free_command))
     application.add_handler(CommandHandler("unfree", unfree_command))
     application.add_handler(CommandHandler("freelist", freelist_command))
