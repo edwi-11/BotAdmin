@@ -171,6 +171,18 @@ CREATE TABLE IF NOT EXISTS secret_messages (
     read_by_id        INTEGER,
     read_by_name      TEXT
 );
+
+-- Donaciones reales en Telegram Stars (/donar).
+CREATE TABLE IF NOT EXISTS donations (
+    id                         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id                    INTEGER NOT NULL,
+    name                       TEXT NOT NULL,
+    username                   TEXT,
+    chat_id                    INTEGER,
+    amount                     INTEGER NOT NULL,
+    telegram_payment_charge_id TEXT,
+    created_at                 INTEGER NOT NULL
+);
 """
 
 # Columnas que se añadieron después de la primera versión del esquema.
@@ -1121,4 +1133,27 @@ class Database:
             "UPDATE secret_messages SET text = ? WHERE id = ?", (text, secret_id),
         )
         await self.conn.commit()
+
+    # ------------------------------------------------------------------ #
+    # Donaciones en Telegram Stars (/donar)
+    # ------------------------------------------------------------------ #
+    async def log_donation(
+        self, user_id: int, name: str, username: Optional[str],
+        chat_id: Optional[int], amount: int, charge_id: Optional[str],
+    ) -> None:
+        await self.conn.execute(
+            """
+            INSERT INTO donations (user_id, name, username, chat_id, amount, telegram_payment_charge_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (user_id, name, username, chat_id, amount, charge_id, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def get_total_donated_by(self, user_id: int) -> int:
+        cursor = await self.conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) AS total FROM donations WHERE user_id = ?", (user_id,)
+        )
+        row = await cursor.fetchone()
+        return int(row["total"]) if row else 0
 
