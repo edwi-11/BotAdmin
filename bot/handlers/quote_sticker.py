@@ -1,70 +1,79 @@
 """
 handlers/quote_sticker.py
 Comando /q — convierte el mensaje respondido en una "tarjeta de cita"
-(estilo QuotLyBot) y la envía como sticker (o como imagen, si se pide).
-
-La tarjeta incluye:
-  - La foto de perfil de la persona citada, como parte de la propia imagen
-    del sticker (no es un adorno aparte: si el sticker se reenvía, la foto
-    va con él). Si no se puede obtener la foto (privacidad, sin foto, etc.)
-    se dibuja un avatar de respaldo con la inicial del nombre.
-  - El nombre, en negrita y con su color de acento, respetando los emojis
-    normales que tenga (☀️🔥❤️ etc.) y, si la persona tiene puesto un
-    "emoji de estado" (los emojis animados premium que se muestran pegados
-    al nombre en Telegram Premium), ese emoji también se dibuja al lado.
-  - El texto del mensaje, con sus emojis normales Y sus emojis premium
-    (custom_emoji) tal cual los escribió la persona.
+al estilo Telegram y la envía como sticker (o como imagen, si se pide).
 
 Uso:
-    /q                       -> cita el mensaje respondido como sticker
+    /q                         -> cita el mensaje respondido como sticker
     /q red / blue / green / purple / orange / pink / black / white / gray
-                              -> color del fondo de la tarjeta
-    /q #cbafff                -> color personalizado (hex)
-    /q random                 -> color aleatorio
-    /q i / img / p / png      -> envía como imagen (foto) en vez de sticker
-    /q r                      -> si el mensaje respondido a su vez respondía
-                                  a otro mensaje, ese mensaje también se
-                                  muestra (arriba, más chico) dentro de la
-                                  misma tarjeta, igual que el ejemplo de
-                                  cita anidada.
-    /q 1 / /q 2 / /q 3 ...    -> además del mensaje respondido, muestra los
-                                  N mensajes anteriores a él en el chat
-                                  (el más viejo arriba, el respondido abajo).
+                                -> color del fondo de la tarjeta
+    /q #cbafff                  -> color personalizado (hex)
+    /q random                   -> color aleatorio
+    /q i / img / p / png        -> envía como imagen (foto) en vez de sticker
+    /q r                        -> si el mensaje respondido a su vez respondía
+                                    a otro mensaje, ese mensaje se muestra
+                                    arriba, en una tarjeta de respuesta anidada
+                                    (igual que la burbuja de "responder" de
+                                    Telegram).
+    /q 1 / /q 2 / /q 3 ...      -> además del mensaje respondido, muestra los
+                                    N mensajes anteriores a él en el chat, en
+                                    orden cronológico (conversación).
 
-Todo es combinable, ej: /q i red 2   -> imagen roja con 2 mensajes de contexto.
+Todo es combinable: /q r 2, /q 4 r, /q i red 2, etc.
 
-Requiere Pillow y pilmoji (ambos en requirements.txt) y, en el servidor,
-alguna fuente TrueType con buena cobertura Unicode (DejaVu Sans, que casi
-siempre viene preinstalada en Debian/Ubuntu vía el paquete
-`fonts-dejavu-core`; si falta, instálala con `apt install -y fonts-dejavu-core`).
-Los emojis normales se dibujan como imágenes a color (vía pilmoji/Twemoji),
-así que el servidor necesita salida a internet la primera vez que se usa
-cada emoji (después queda cacheado en memoria/disco por pilmoji).
+Qué se dibuja además del texto (según el tipo de mensaje citado):
+    foto, sticker, video, GIF, nota de video -> miniatura
+    documento, audio, nota de voz            -> tarjeta con ícono
+    ubicación / venue                        -> tarjeta con coordenadas
+    encuesta                                 -> tarjeta con la pregunta
+    contacto                                 -> tarjeta con nombre/teléfono
+    reenviado                                -> insignia "↪ Reenviado"
+    emojis premium (custom_emoji)            -> se descargan y se dibujan
+                                                 tal cual (si son estáticos)
+
+Limitaciones que vienen de la Bot API de Telegram y no se pueden evitar:
+    - Stickers/GIFs o emojis premium ANIMADOS (.tgs / Lottie) no se pueden
+      rasterizar sin la librería `rlottie`; se usa la miniatura estática
+      que Telegram manda, o si no hay, se cae al emoji unicode original.
+    - Stickers/GIFs en VIDEO (.webm) necesitarían `ffmpeg`; mismo fallback.
+    - La ubicación se muestra como tarjeta con coordenadas, no como mapa
+      real (necesitaría una API de mapas con su propia clave).
+
+Requiere Pillow (ya en requirements.txt). Para emojis a color de verdad
+hace falta una fuente de emoji-color instalada en el servidor, por ejemplo:
+    apt install -y fonts-noto-color-emoji fonts-dejavu-core
+Sin esa fuente, los emojis se siguen mostrando (con la fuente normal, en
+blanco y negro / contorno) en vez de desaparecer.
 """
 from __future__ import annotations
 
 import io
 import logging
 import random
-import re
 import unicodedata
 from dataclasses import dataclass, field
 from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
-from pilmoji import Pilmoji
-from telegram import Message, MessageEntity, Update, User
+from telegram import Message, MessageEntity, Update
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from utils.formatting import error
 from utils.message_log import describe_media, get_previous
+from utils.telegram_media import (
+    MediaThumb,
+    fetch_avatar,
+    fetch_custom_emoji_images,
+    fetch_message_media,
+    fit_within,
+    rounded_crop,
+)
 
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------- #
-# Fuentes (con lista de rutas alternativas por si el servidor no tiene
-# exactamente las mismas instaladas)
+# Fuentes
 # --------------------------------------------------------------------- #
 _REGULAR_FONT_PATHS = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -76,48 +85,145 @@ _BOLD_FONT_PATHS = [
     "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
 ]
+_ITALIC_FONT_PATHS = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Italic.ttf",
+]
+# Fuente de emoji A COLOR (opcional). Si el servidor no la tiene instalada,
+# los emojis se dibujan con la fuente normal (se ven como contornos/"tofu").
+_COLOR_EMOJI_FONT_PATHS = [
+    "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+    "/usr/share/fonts/noto/NotoColorEmoji.ttf",
+    "/usr/share/fonts/truetype/noto-color-emoji/NotoColorEmoji.ttf",
+]
+
+_font_cache: dict[tuple[str, int], ImageFont.FreeTypeFont] = {}
 
 
 def _load_font(paths: list[str], size: int) -> ImageFont.FreeTypeFont:
+    key = (paths[0] if paths else "default", size)
+    if key in _font_cache:
+        return _font_cache[key]
     for path in paths:
         try:
-            return ImageFont.truetype(path, size)
+            font = ImageFont.truetype(path, size)
+            _font_cache[key] = font
+            return font
         except OSError:
             continue
-    logger.warning("No se encontró ninguna fuente TrueType, usando la fuente por defecto de Pillow (se verá fea).")
-    return ImageFont.load_default()
+    logger.warning("No se encontró ninguna fuente TrueType en %s, usando la de Pillow por defecto.", paths)
+    font = ImageFont.load_default()
+    _font_cache[key] = font
+    return font
 
 
-# --------------------------------------------------------------------- #
-# Saneo de texto Unicode
-# Ya NO se eliminan los emojis normales (antes se borraban por completo);
-# ahora se dibujan con pilmoji, así que solo se limpian caracteres de
-# control/formato y se limita el spam de tildes/combinantes.
-# --------------------------------------------------------------------- #
-_STRIP_CATEGORIES = {"Cc", "Cf", "Co", "Cs"}  # control, formato, uso privado, sustitutos
-
-
-def _sanitize_text(text: str, *, max_combining: int = 2) -> str:
-    normalized = unicodedata.normalize("NFC", text)  # NFC (no NFKC) para no romper secuencias de emoji
-
-    cleaned: list[str] = []
-    combining_run = 0
-    for ch in normalized:
-        category = unicodedata.category(ch)
-
-        if category in _STRIP_CATEGORIES:
+def _load_color_emoji_font() -> Optional[ImageFont.FreeTypeFont]:
+    key = ("__color_emoji__", 0)
+    if key in _font_cache:
+        cached = _font_cache[key]
+        return cached if cached is not None else None
+    for path in _COLOR_EMOJI_FONT_PATHS:
+        try:
+            # Las fuentes de emoji a color suelen venir con un solo tamaño de
+            # "strike" embebido (típicamente 109px); Pillow igual la puede
+            # usar con draw.text(..., embedded_color=True).
+            font = ImageFont.truetype(path, 109)
+            _font_cache[key] = font
+            return font
+        except OSError:
             continue
+    _font_cache[key] = None
+    return None
 
-        if category in ("Mn", "Me"):
-            combining_run += 1
-            if combining_run > max_combining:
-                continue
-        else:
-            combining_run = 0
 
+# --------------------------------------------------------------------- #
+# Saneo de texto — a diferencia de la versión anterior, ahora se preserva
+# el texto tal cual llega (mayúsculas/minúsculas, tipografías Unicode,
+# espacios invisibles, emojis, RTL, CJK...). Solo se descartan caracteres
+# que directamente romperían el render: control C0 (salvo salto de línea)
+# y sustitutos UTF-16 sueltos (inválidos por sí solos en un str de Python).
+# --------------------------------------------------------------------- #
+def _sanitize_text(text: str) -> str:
+    cleaned = []
+    for ch in text:
+        cat = unicodedata.category(ch)
+        if cat == "Cs":
+            continue
+        if cat == "Cc" and ch not in ("\n", "\t"):
+            continue
         cleaned.append(ch)
+    return "".join(cleaned).strip("\n").strip()
 
-    return "".join(cleaned).strip()
+
+# --------------------------------------------------------------------- #
+# Detección de "runs" de emoji dentro de una línea, para poder elegir
+# fuente de emoji (a color, si hay) en vez de la fuente normal, sin romper
+# secuencias compuestas (ZWJ, banderas, tonos de piel).
+# --------------------------------------------------------------------- #
+_EMOJI_RANGES: list[tuple[int, int]] = [
+    (0x1F000, 0x1FFFF),
+    (0x2600, 0x27BF),
+    (0x2190, 0x21FF),
+    (0x2B00, 0x2BFF),
+    (0x2300, 0x23FF),
+    (0xFE00, 0xFE0F),
+]
+_JOINERS = {0x200D}  # ZWJ
+
+
+def _is_emoji_codepoint(code: int) -> bool:
+    return code in _JOINERS or any(start <= code <= end for start, end in _EMOJI_RANGES)
+
+
+def _split_runs(text: str) -> list[tuple[str, bool]]:
+    """Divide `text` en tramos alternados (texto, es_emoji)."""
+    if not text:
+        return []
+    runs: list[tuple[str, bool]] = []
+    current = text[0]
+    current_is_emoji = _is_emoji_codepoint(ord(text[0]))
+    for ch in text[1:]:
+        is_emoji = _is_emoji_codepoint(ord(ch))
+        if is_emoji == current_is_emoji:
+            current += ch
+        else:
+            runs.append((current, current_is_emoji))
+            current = ch
+            current_is_emoji = is_emoji
+    runs.append((current, current_is_emoji))
+    return runs
+
+
+# --------------------------------------------------------------------- #
+# Offsets UTF-16 (los que usa Telegram) <-> índices de str de Python
+# --------------------------------------------------------------------- #
+def _utf16_unit_len(ch: str) -> int:
+    return 2 if ord(ch) > 0xFFFF else 1
+
+
+def _utf16_offset_to_py_index(text: str, utf16_offset: int) -> int:
+    count = 0
+    for i, ch in enumerate(text):
+        if count >= utf16_offset:
+            return i
+        count += _utf16_unit_len(ch)
+    return len(text)
+
+
+def _custom_emoji_spans(text: str, entities: Optional[list[MessageEntity]]) -> list[tuple[int, int, str]]:
+    """[(inicio_py, fin_py, custom_emoji_id), ...] ordenado, sobre `text`."""
+    if not entities:
+        return []
+    spans = []
+    for e in entities:
+        if e.type != MessageEntity.CUSTOM_EMOJI or not e.custom_emoji_id:
+            continue
+        start = _utf16_offset_to_py_index(text, e.offset)
+        end = _utf16_offset_to_py_index(text, e.offset + e.length)
+        if start < end:
+            spans.append((start, end, e.custom_emoji_id))
+    spans.sort(key=lambda s: s[0])
+    return spans
 
 
 # --------------------------------------------------------------------- #
@@ -194,364 +300,333 @@ def _parse_command_args(args: list[str]) -> tuple[tuple[int, int, int], bool, bo
 
 
 # --------------------------------------------------------------------- #
-# Emojis premium (custom_emoji): convertir los offsets UTF-16 que manda
-# Telegram a índices de caracteres de Python, y luego ubicar esos mismos
-# emojis dentro del texto ya saneado (por si el saneo corrió algún índice).
-# --------------------------------------------------------------------- #
-def _entity_char_spans_raw(text: str, entities: Optional[list[MessageEntity]]) -> list[tuple[int, int, str]]:
-    if not entities:
-        return []
-    utf16 = text.encode("utf-16-le")
-    spans: list[tuple[int, int, str]] = []
-    for e in entities:
-        if e.type != MessageEntity.CUSTOM_EMOJI or not e.custom_emoji_id:
-            continue
-        start_b, end_b = e.offset * 2, (e.offset + e.length) * 2
-        try:
-            start_c = len(utf16[:start_b].decode("utf-16-le"))
-            end_c = len(utf16[:end_b].decode("utf-16-le"))
-        except UnicodeDecodeError:
-            continue
-        spans.append((start_c, end_c, e.custom_emoji_id))
-    spans.sort()
-    return spans
-
-
-def _map_custom_emoji_spans(raw_text: str, clean_text: str, entities: Optional[list[MessageEntity]]) -> list[tuple[int, int, str]]:
-    """Ubica cada emoji premium (por su placeholder unicode) dentro del texto ya saneado."""
-    mapped: list[tuple[int, int, str]] = []
-    cursor = 0
-    for start_c, end_c, cid in _entity_char_spans_raw(raw_text, entities):
-        placeholder = raw_text[start_c:end_c]
-        if not placeholder:
-            continue
-        idx = clean_text.find(placeholder, cursor)
-        if idx == -1:
-            idx = clean_text.find(placeholder)
-        if idx == -1:
-            continue
-        mapped.append((idx, idx + len(placeholder), cid))
-        cursor = idx + len(placeholder)
-    return mapped
-
-
-# --------------------------------------------------------------------- #
-# Descarga de imágenes desde Telegram (avatar, emoji de estado, emojis
-# premium dentro del texto). Todo con manejo de errores silencioso: si
-# algo falla (privacidad, sin conexión, etc.) simplemente no se dibuja
-# esa parte y la tarjeta se genera igual.
-# --------------------------------------------------------------------- #
-async def _download_file_as_image(bot, file_id: str) -> Optional[Image.Image]:
-    try:
-        tg_file = await bot.get_file(file_id)
-        raw = await tg_file.download_as_bytearray()
-        return Image.open(io.BytesIO(bytes(raw))).convert("RGBA")
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("No se pudo descargar el archivo %s: %s", file_id, exc)
-        return None
-
-
-async def _fetch_avatar_image(bot, user_id: int) -> Optional[Image.Image]:
-    try:
-        photos = await bot.get_user_profile_photos(user_id, limit=1)
-        if not photos or not photos.photos:
-            return None
-        file_id = photos.photos[0][-1].file_id  # el tamaño más grande disponible
-        return await _download_file_as_image(bot, file_id)
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("No se pudo obtener el avatar de %s: %s", user_id, exc)
-        return None
-
-
-async def _download_sticker_image(bot, sticker) -> Optional[Image.Image]:
-    file_id = None
-    if getattr(sticker, "is_animated", False) or getattr(sticker, "is_video", False):
-        if sticker.thumbnail:
-            file_id = sticker.thumbnail.file_id
-    else:
-        file_id = sticker.file_id
-    if not file_id:
-        return None
-    return await _download_file_as_image(bot, file_id)
-
-
-async def _fetch_custom_emoji_image(bot, custom_emoji_id: str, cache: dict[str, Optional[Image.Image]]) -> Optional[Image.Image]:
-    if custom_emoji_id in cache:
-        return cache[custom_emoji_id]
-    img = None
-    try:
-        stickers = await bot.get_custom_emoji_stickers([custom_emoji_id])
-        if stickers:
-            img = await _download_sticker_image(bot, stickers[0])
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("No se pudo obtener el emoji premium %s: %s", custom_emoji_id, exc)
-    cache[custom_emoji_id] = img
-    return img
-
-
-async def _fetch_emoji_status_image(bot, user_id: int, cache: dict[str, Optional[Image.Image]]) -> Optional[Image.Image]:
-    try:
-        chat = await bot.get_chat(user_id)
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("No se pudo obtener el chat de %s: %s", user_id, exc)
-        return None
-    emoji_id = getattr(chat, "emoji_status_custom_emoji_id", None)
-    if not emoji_id:
-        return None
-    return await _fetch_custom_emoji_image(bot, emoji_id, cache)
-
-
-# --------------------------------------------------------------------- #
-# Avatares circulares (foto real, o un avatar de respaldo con la inicial)
-# --------------------------------------------------------------------- #
-def _to_circle(img: Image.Image, size: int) -> Image.Image:
-    img = img.convert("RGBA")
-    w, h = img.size
-    side = min(w, h)
-    left, top = (w - side) // 2, (h - side) // 2
-    img = img.crop((left, top, left + side, top + side)).resize((size, size), Image.LANCZOS)
-    mask = Image.new("L", (size, size), 0)
-    ImageDraw.Draw(mask).ellipse((0, 0, size, size), fill=255)
-    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    out.paste(img, (0, 0), mask)
-    return out
-
-
-def _fallback_avatar(name: str, seed: int, size: int) -> Image.Image:
-    color = _accent_color_for(seed)
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    draw.ellipse((0, 0, size, size), fill=(*color, 255))
-    letter = (name.strip()[:1] or "?").upper()
-    font = _load_font(_BOLD_FONT_PATHS, int(size * 0.48))
-    bbox = draw.textbbox((0, 0), letter, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text(((size - tw) / 2 - bbox[0], (size - th) / 2 - bbox[1]), letter, font=font, fill=(255, 255, 255, 255))
-    return img
-
-
-# --------------------------------------------------------------------- #
-# Word-wrap con truncado a una cantidad máxima de líneas. Además de las
-# líneas, devuelve el offset (en caracteres, dentro del texto original)
-# donde empieza cada línea, para poder ubicar ahí los emojis premium.
+# Word-wrap con truncado a una cantidad máxima de líneas
 # --------------------------------------------------------------------- #
 def _wrap_and_truncate(
     draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max_width: int, max_lines: int
-) -> list[tuple[str, int]]:
-    words = [(m.group(0), m.start()) for m in re.finditer(r"\S+", text)]
-    lines: list[tuple[str, int]] = []
+) -> list[str]:
+    words = text.split(" ")
+    lines: list[str] = []
     current = ""
-    current_start = 0
-    for word, start in words:
-        candidate = f"{current} {word}".strip() if current else word
+    for word in words:
+        candidate = f"{current} {word}".strip()
         if draw.textlength(candidate, font=font) <= max_width:
-            if not current:
-                current_start = start
             current = candidate
         else:
             if current:
-                lines.append((current, current_start))
+                lines.append(current)
             current = word
-            current_start = start
             while draw.textlength(current, font=font) > max_width and len(current) > 1:
                 current = current[:-1]
         if len(lines) >= max_lines:
             break
     if current and len(lines) < max_lines:
-        lines.append((current, current_start))
+        lines.append(current)
 
-    lines = lines[:max_lines] or [("", 0)]
-    total_shown = sum(len(l) for l, _ in lines)
-    if total_shown < len(text.strip()) and lines:
-        last, last_start = lines[-1]
+    lines = lines[:max_lines] or [""]
+    if len(" ".join(lines)) < len(text.strip()) and lines:
+        last = lines[-1]
         while draw.textlength(last + "…", font=font) > max_width and len(last) > 1:
             last = last[:-1]
-        lines[-1] = (last.rstrip() + "…", last_start)
+        lines[-1] = last.rstrip() + "…"
     return lines
 
 
-def _safe_emoji_text(
-    img: Image.Image,
-    draw: ImageDraw.ImageDraw,
-    xy: tuple[float, float],
-    text: str,
-    font: ImageFont.FreeTypeFont,
-    fill,
-) -> None:
-    """Dibuja texto con emojis a color vía pilmoji; si falla (sin red, etc.)
-    cae a texto plano para no tumbar la generación del sticker."""
-    try:
-        with Pilmoji(img, draw=draw) as pilmoji:
-            pilmoji.text(xy, text, fill=fill, font=font)
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("pilmoji falló, dibujando texto plano: %s", exc)
-        draw.text(xy, text, fill=fill, font=font)
+def _wrap_preserving_emoji_spans(
+    draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max_width: int, max_lines: int
+) -> list[tuple[str, int]]:
+    """Como _wrap_and_truncate, pero además devuelve, por línea, el índice
+    (en `text`) donde empieza esa línea — necesario para poder ubicar los
+    emojis premium (que se referencian por offset en el texto original)."""
+    lines = _wrap_and_truncate(draw, text, font, max_width, max_lines)
+    out: list[tuple[str, int]] = []
+    search_from = 0
+    for line in lines:
+        probe = line.rstrip("…").rstrip()
+        idx = text.find(probe, search_from) if probe else search_from
+        if idx == -1:
+            idx = search_from
+        out.append((line, idx))
+        search_from = idx + len(probe)
+    return out
 
 
 # --------------------------------------------------------------------- #
-# Dibuja una línea de texto ya wrapeada, sustituyendo los tramos que
-# corresponden a un emoji premium por su imagen real, y usando pilmoji
-# para que los emojis normales (unicode) del resto del texto también se
-# vean a color en vez de como texto plano.
+# Dibuja una línea de texto, sustituyendo emojis premium por su imagen
+# real (si se pudo descargar) y usando la fuente de emoji a color (si hay)
+# para el resto de los emojis unicode normales.
 # --------------------------------------------------------------------- #
 def _draw_rich_line(
-    img: Image.Image,
     draw: ImageDraw.ImageDraw,
     xy: tuple[int, int],
     line: str,
-    line_start: int,
+    line_start_idx: int,
     font: ImageFont.FreeTypeFont,
+    emoji_font: Optional[ImageFont.FreeTypeFont],
     fill: tuple[int, int, int],
     emoji_spans: list[tuple[int, int, str]],
     emoji_images: dict[str, Optional[Image.Image]],
+    canvas: Image.Image,
 ) -> None:
     x, y = xy
-    line_end = line_start + len(line)
-    local_spans = sorted(
-        (max(s, line_start) - line_start, min(e, line_end) - line_start, cid)
-        for s, e, cid in emoji_spans
-        if e > line_start and s < line_end
-    )
+    font_size = font.size
+    pos = 0  # índice dentro de `line`
+    while pos < len(line):
+        abs_idx = line_start_idx + pos
 
-    icon_size = int(font.size * 1.05)
-    cursor = 0
-    for start, end, cid in local_spans:
-        if start > cursor:
-            chunk = line[cursor:start]
-            _safe_emoji_text(img, draw, (x, y), chunk, font, fill)
-            x += draw.textlength(chunk, font=font)
-        emoji_img = emoji_images.get(cid)
-        if emoji_img:
-            resized = emoji_img.resize((icon_size, icon_size), Image.LANCZOS)
-            img.paste(resized, (int(x), int(y + (font.size - icon_size) // 2)), resized)
-            x += icon_size + 2
-        else:
-            # No se pudo descargar el emoji premium: al menos no perdemos el texto.
-            placeholder = line[start:end] or "❓"
-            _safe_emoji_text(img, draw, (x, y), placeholder, font, fill)
-            x += draw.textlength(placeholder, font=font)
-        cursor = end
+        # ¿Este punto cae dentro de un emoji premium con imagen descargada?
+        custom = next(
+            (s for s in emoji_spans if s[0] <= abs_idx < s[1] and emoji_images.get(s[2]) is not None), None
+        )
+        if custom:
+            _, span_end, emoji_id = custom
+            span_len_in_line = min(span_end, line_start_idx + len(line)) - abs_idx
+            img = emoji_images[emoji_id]
+            side = font_size
+            paste = img.convert("RGBA").resize((side, side), Image.LANCZOS)
+            canvas.paste(paste, (int(x), int(y)), paste)
+            x += side
+            pos += span_len_in_line
+            continue
 
-    if cursor < len(line):
-        chunk = line[cursor:]
-        _safe_emoji_text(img, draw, (x, y), chunk, font, fill)
+        # Si no, dibujamos el siguiente "run" (texto normal o emoji unicode)
+        rest = line[pos:]
+        run_text, run_is_emoji = _split_runs(rest)[0]
+        # No cruzar hacia un emoji premium ya cubierto: recortamos el run
+        # si un span premium empieza en el medio.
+        for s in emoji_spans:
+            if s[0] > abs_idx and s[0] < abs_idx + len(run_text) and emoji_images.get(s[2]) is not None:
+                run_text = run_text[: s[0] - abs_idx]
+                break
+
+        use_font = emoji_font if (run_is_emoji and emoji_font is not None) else font
+        try:
+            if run_is_emoji and emoji_font is not None:
+                draw.text((x, y), run_text, font=use_font, embedded_color=True)
+            else:
+                draw.text((x, y), run_text, font=use_font, fill=fill)
+        except OSError:
+            # Alguna fuente de emoji-color puede fallar con ciertos tamaños;
+            # si pasa, se cae de nuevo a la fuente de texto normal.
+            draw.text((x, y), run_text, font=font, fill=fill)
+        x += draw.textlength(run_text, font=use_font)
+        pos += len(run_text)
 
 
 # --------------------------------------------------------------------- #
-# Filas de la tarjeta (cada una es un mensaje: el citado, o uno de contexto)
+# Filas de la tarjeta (cada una es un mensaje: el citado, uno de contexto,
+# o la vista previa de "a qué respondía")
 # --------------------------------------------------------------------- #
+@dataclass(slots=True)
+class _Attachment:
+    icon: str
+    title: str
+    subtitle: str = ""
+
+
+@dataclass(slots=True)
+class _ReplyPreview:
+    name: str
+    text: str
+    seed: int
+
+
 @dataclass(slots=True)
 class _Row:
     name: str
     text: str
-    seed: int                                  # para elegir el color de acento (barrita + nombre)
-    user_id: Optional[int] = None              # para pedir avatar / emoji de estado (solo la fila principal)
-    raw_text: str = ""                         # texto tal cual, sin sanear (para ubicar emojis premium)
-    entities: list[MessageEntity] = field(default_factory=list)
+    seed: int
+    emoji_spans: list[tuple[int, int, str]] = field(default_factory=list)
+    emoji_images: dict[str, Optional[Image.Image]] = field(default_factory=dict)
+    avatar: Optional[Image.Image] = None
+    media: Optional[MediaThumb] = None
+    attachment: Optional[_Attachment] = None
+    forwarded_from: Optional[str] = None
+    reply_preview: Optional[_ReplyPreview] = None
 
 
-def _row_from_message(message: Message) -> _Row:
+def _sender_name(message: Message) -> tuple[str, int]:
     if message.from_user:
         name = message.from_user.first_name or message.from_user.username or "Usuario"
         seed = message.from_user.id
-        user_id = message.from_user.id
     elif message.sender_chat:
         name = message.sender_chat.title or "Canal"
         seed = message.sender_chat.id
-        user_id = None
     else:
-        name, seed, user_id = "Usuario", 0, None
+        name, seed = "Usuario", 0
+    return name, (seed or hash(name))
 
-    raw_text = message.text or message.caption or ""
-    entities = list(message.entities or message.caption_entities or [])
-    text = raw_text.strip() or describe_media(message)
-    return _Row(
-        name=_sanitize_text(name) or "Usuario",
-        text=_sanitize_text(text),
-        seed=seed or hash(name),
-        user_id=user_id,
-        raw_text=raw_text,
-        entities=entities,
+
+def _forward_label(message: Message) -> Optional[str]:
+    origin = getattr(message, "forward_origin", None)
+    if origin is None:
+        return None
+    kind = getattr(origin, "type", "")
+    if kind == "user" and getattr(origin, "sender_user", None):
+        return origin.sender_user.first_name or origin.sender_user.username or "alguien"
+    if kind == "hidden_user":
+        return getattr(origin, "sender_user_name", None) or "alguien"
+    if kind == "chat" and getattr(origin, "sender_chat", None):
+        return origin.sender_chat.title or "un canal"
+    if kind == "channel" and getattr(origin, "chat", None):
+        return origin.chat.title or "un canal"
+    return "otro chat"
+
+
+def _build_attachment(message: Message) -> Optional[_Attachment]:
+    if message.document:
+        size = message.document.file_size or 0
+        subtitle = _human_size(size) if size else ""
+        return _Attachment("📄", message.document.file_name or "Documento", subtitle)
+    if message.audio:
+        title = message.audio.title or message.audio.file_name or "Audio"
+        subtitle = message.audio.performer or _human_duration(message.audio.duration)
+        return _Attachment("🎵", title, subtitle)
+    if message.voice:
+        return _Attachment("🎤", "Nota de voz", _human_duration(message.voice.duration))
+    if message.location:
+        loc = message.location
+        return _Attachment("📍", "Ubicación", f"{loc.latitude:.5f}, {loc.longitude:.5f}")
+    if message.venue:
+        return _Attachment("📍", message.venue.title, message.venue.address or "")
+    if message.poll:
+        poll = message.poll
+        subtitle = f"{len(poll.options)} opciones · {poll.total_voter_count} votos"
+        return _Attachment("📊", poll.question, subtitle)
+    if message.contact:
+        contact = message.contact
+        name = " ".join(filter(None, [contact.first_name, contact.last_name])) or "Contacto"
+        return _Attachment("👤", name, contact.phone_number or "")
+    if message.dice:
+        return _Attachment(message.dice.emoji, f"Dado: {message.dice.value}", "")
+    return None
+
+
+def _human_size(n: int) -> str:
+    n = float(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024:
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} TB"
+
+
+def _human_duration(seconds: int) -> str:
+    m, s = divmod(int(seconds or 0), 60)
+    return f"{m}:{s:02d}"
+
+
+def _has_media(message: Message) -> bool:
+    return bool(
+        message.photo or message.sticker or message.video or message.animation or message.video_note
     )
 
 
+async def _row_from_message(
+    bot, message: Message, *, with_avatar: bool = False, with_media: bool = False
+) -> _Row:
+    name, seed = _sender_name(message)
+    raw_text = (message.text or message.caption or "")
+    entities = message.entities or message.caption_entities or []
+
+    text = _sanitize_text(raw_text) or _sanitize_text(describe_media(message))
+    spans = _custom_emoji_spans(raw_text, entities) if raw_text else []
+
+    emoji_images: dict[str, Optional[Image.Image]] = {}
+    if spans:
+        try:
+            emoji_images = await fetch_custom_emoji_images(bot, entities)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("No pude traer los emojis premium: %s", exc)
+
+    row = _Row(
+        name=_sanitize_text(name) or "Usuario",
+        text=text,
+        seed=seed,
+        emoji_spans=spans,
+        emoji_images=emoji_images,
+        forwarded_from=_forward_label(message),
+        attachment=None if raw_text.strip() and not _has_media(message) else _build_attachment(message),
+    )
+
+    if with_avatar and message.from_user:
+        try:
+            row.avatar = await fetch_avatar(bot, message.from_user.id, 96)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("No pude traer el avatar: %s", exc)
+
+    if with_media and _has_media(message):
+        try:
+            row.media = await fetch_message_media(bot, message)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("No pude traer la miniatura: %s", exc)
+
+    return row
+
+
 # --------------------------------------------------------------------- #
-# Assets remotos (avatar, emoji de estado, emojis premium del texto) que
-# hay que descargar ANTES de dibujar, porque dibujar es síncrono pero
-# pedirle cosas a Telegram es asíncrono.
-# --------------------------------------------------------------------- #
-@dataclass(slots=True)
-class _Assets:
-    avatar: Optional[Image.Image] = None
-    status: Optional[Image.Image] = None
-    custom_emojis: dict[str, Optional[Image.Image]] = field(default_factory=dict)
-
-
-async def _gather_assets(bot, main_row: _Row, rows: list[_Row]) -> _Assets:
-    emoji_cache: dict[str, Optional[Image.Image]] = {}
-    avatar = None
-    status = None
-
-    if main_row.user_id:
-        avatar = await _fetch_avatar_image(bot, main_row.user_id)
-        status = await _fetch_emoji_status_image(bot, main_row.user_id, emoji_cache)
-
-    for row in rows:
-        spans = _map_custom_emoji_spans(row.raw_text, row.text, row.entities)
-        for _, _, cid in spans:
-            if cid not in emoji_cache:
-                await _fetch_custom_emoji_image(bot, cid, emoji_cache)
-
-    return _Assets(avatar=avatar, status=status, custom_emojis=emoji_cache)
-
-
-# --------------------------------------------------------------------- #
-# Render principal — tarjeta al estilo "cita de Telegram": el avatar de
-# la persona citada, como parte del propio sticker, a la izquierda; y a
-# la derecha una tarjeta con su nombre (+ emoji de estado, si tiene) y su
-# mensaje. Cuando hay varios mensajes (contexto de /q N o /q r), se
-# apilan uno encima del otro dentro de la misma tarjeta, con los más
-# viejos arriba (más chicos y tenues) y el mensaje citado al final, más
-# grande.
+# Render principal
 # --------------------------------------------------------------------- #
 _CANVAS_SIDE = 512
-_AVATAR_SIZE = 108
-_AVATAR_GAP = 16
-_PADDING = 26
-_TEXT_GAP = 0
-_ROW_GAP = 18
+_PADDING = 28
+_BAR_WIDTH = 5
+_BAR_RADIUS = 3
+_TEXT_GAP = 16
+_ROW_GAP = 16
+_AVATAR_SIZE = 60
+_MEDIA_MAX = 220
 
-_MAIN_NAME_SIZE = 30
-_MAIN_TEXT_SIZE = 34
-_CTX_NAME_SIZE = 22
-_CTX_TEXT_SIZE = 25
+_MAIN_NAME_SIZE = 28
+_MAIN_TEXT_SIZE = 32
+_CTX_NAME_SIZE = 21
+_CTX_TEXT_SIZE = 24
 _CTX_MAX_LINES = 2
+_MAIN_MAX_LINES_CAP = 8
 _LINE_SPACING = 1.28
-_STATUS_ICON_SIZE = 28
+_REPLY_PREVIEW_NAME_SIZE = 19
+_REPLY_PREVIEW_TEXT_SIZE = 19
+_FORWARD_LABEL_SIZE = 18
 
 
-def _row_accent(row: _Row, bg: tuple[int, int, int]) -> tuple[int, int, int]:
-    color = _accent_color_for(row.seed)
+def _panel_color(bg: tuple[int, int, int]) -> tuple[int, int, int]:
+    """Un tono ligeramente distinto al fondo, para las tarjetas internas
+    (respuesta anidada, documento, audio, etc.) — más claro sobre fondos
+    oscuros, más oscuro sobre fondos claros, para que siempre se note."""
+    if _text_is_light(bg):
+        return tuple(max(0, c - 16) for c in bg)  # type: ignore[return-value]
+    return tuple(min(255, c + 14) for c in bg)  # type: ignore[return-value]
+
+
+def _row_accent(seed: int, bg: tuple[int, int, int]) -> tuple[int, int, int]:
+    color = _accent_color_for(seed)
     if _text_is_light(bg):
         color = tuple(max(0, c - 60) for c in color)  # type: ignore[assignment]
     return color
 
 
-def _render_quote_card(rows: list[_Row], bg: tuple[int, int, int], rounded: bool, assets: _Assets) -> Image.Image:
+def _render_quote_card(
+    rows: list[_Row],
+    bg: tuple[int, int, int],
+    rounded: bool,
+    reply_preview: Optional[_ReplyPreview],
+) -> Image.Image:
     if not rows:
         rows = [_Row(name="Usuario", text="", seed=0)]
 
     text_color_main = (30, 30, 32) if _text_is_light(bg) else (245, 245, 245)
     text_color_ctx = tuple((m + b) // 2 for m, b in zip(text_color_main, bg))
+    muted = tuple((m + b) // 2 for m, b in zip(text_color_ctx, bg))
 
     body_font_main = _load_font(_REGULAR_FONT_PATHS, _MAIN_TEXT_SIZE)
     body_font_ctx = _load_font(_REGULAR_FONT_PATHS, _CTX_TEXT_SIZE)
     name_font_main = _load_font(_BOLD_FONT_PATHS, _MAIN_NAME_SIZE)
     name_font_ctx = _load_font(_BOLD_FONT_PATHS, _CTX_NAME_SIZE)
+    small_font = _load_font(_REGULAR_FONT_PATHS, _REPLY_PREVIEW_TEXT_SIZE)
+    small_bold_font = _load_font(_BOLD_FONT_PATHS, _REPLY_PREVIEW_NAME_SIZE)
+    italic_font = _load_font(_ITALIC_FONT_PATHS or _REGULAR_FONT_PATHS, _FORWARD_LABEL_SIZE)
+    emoji_font = _load_color_emoji_font()
 
-    bubble_x0 = _AVATAR_SIZE + _AVATAR_GAP
-    bar_x = bubble_x0 + _PADDING
-    text_left = bar_x
+    text_left = _PADDING + _BAR_WIDTH + _TEXT_GAP
     max_text_width = _CANVAS_SIDE - text_left - _PADDING
 
     probe = Image.new("RGBA", (10, 10))
@@ -560,18 +635,37 @@ def _render_quote_card(rows: list[_Row], bg: tuple[int, int, int], rounded: bool
     line_h_ctx = int(_CTX_TEXT_SIZE * _LINE_SPACING)
     line_h_main = int(_MAIN_TEXT_SIZE * _LINE_SPACING)
 
+    *context_rows, main_row = rows
+
+    forward_h = (_FORWARD_LABEL_SIZE + 6) if main_row.forwarded_from else 0
+
+    reply_box_h = 0
+    if reply_preview is not None:
+        reply_box_h = _REPLY_PREVIEW_NAME_SIZE + 6 + int(_REPLY_PREVIEW_TEXT_SIZE * 1.3) + 18
+
+    media_h = 0
+    media_render: Optional[Image.Image] = None
+    if main_row.media is not None:
+        fitted = fit_within(main_row.media.image, _CANVAS_SIDE - _PADDING * 2, _MEDIA_MAX)
+        media_render = rounded_crop(fitted, fitted.size[0], fitted.size[1], 18)
+        media_h = media_render.size[1] + 12
+
+    attachment_h = 0
+    if main_row.attachment is not None and media_render is None:
+        attachment_h = 74
+
     def ctx_block_h(n_lines: int) -> int:
         return _CTX_NAME_SIZE + 8 + n_lines * line_h_ctx
 
     def main_block_h(n_lines: int) -> int:
-        extra = _STATUS_ICON_SIZE + 6 if assets.status else 0
-        return max(_MAIN_NAME_SIZE, extra) + 10 + n_lines * line_h_main
+        extra = forward_h + reply_box_h
+        text_h = n_lines * line_h_main if main_row.text.strip() else 0
+        return _MAIN_NAME_SIZE + 10 + extra + text_h + media_h + attachment_h
 
-    *context_rows, main_row = rows
     available_h = _CANVAS_SIDE - _PADDING * 2
-    min_main_h = main_block_h(1)
+    min_main_h = main_block_h(1 if main_row.text.strip() else 0)
 
-    kept: list[tuple[_Row, list[tuple[str, int]]]] = []
+    kept: list[tuple[_Row, list[str]]] = []
     used_h = 0
     for row in reversed(context_rows):
         lines = _wrap_and_truncate(probe_draw, row.text.strip() or " ", body_font_ctx, max_text_width, _CTX_MAX_LINES)
@@ -583,65 +677,94 @@ def _render_quote_card(rows: list[_Row], bg: tuple[int, int, int], rounded: bool
     kept.reverse()
 
     remaining_for_main = available_h - used_h
-    max_main_lines = max(1, (remaining_for_main - _MAIN_NAME_SIZE - 10) // line_h_main)
-    main_lines = _wrap_and_truncate(probe_draw, main_row.text.strip() or " ", body_font_main, max_text_width, max_main_lines)
+    fixed_main = forward_h + reply_box_h + media_h + attachment_h + _MAIN_NAME_SIZE + 10
+    max_main_lines = max(0, (remaining_for_main - fixed_main) // line_h_main)
+    max_main_lines = min(max_main_lines, _MAIN_MAX_LINES_CAP)
+    main_lines_with_idx: list[tuple[str, int]] = []
+    if main_row.text.strip() and max_main_lines > 0:
+        main_lines_with_idx = _wrap_preserving_emoji_spans(
+            probe_draw, main_row.text, body_font_main, max_text_width, max_main_lines
+        )
+    n_main_lines = len(main_lines_with_idx)
 
-    content_h = used_h + main_block_h(len(main_lines))
-    canvas_h = min(_CANVAS_SIDE, max(_PADDING * 2 + content_h, _AVATAR_SIZE + _PADDING))
+    content_h = used_h + main_block_h(n_main_lines)
+    canvas_h = min(_CANVAS_SIDE, max(120, _PADDING * 2 + content_h))
 
     img = Image.new("RGBA", (_CANVAS_SIDE, canvas_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     if rounded:
-        draw.rounded_rectangle((bubble_x0, 0, _CANVAS_SIDE - 1, canvas_h - 1), radius=40, fill=(*bg, 255))
+        draw.rounded_rectangle((0, 0, _CANVAS_SIDE - 1, canvas_h - 1), radius=40, fill=(*bg, 255))
     else:
-        draw.rectangle((bubble_x0, 0, _CANVAS_SIDE - 1, canvas_h - 1), fill=(*bg, 255))
+        draw.rectangle((0, 0, _CANVAS_SIDE - 1, canvas_h - 1), fill=(*bg, 255))
 
     y = _PADDING
     for row, lines in kept:
-        accent = _row_accent(row, bg)
+        accent = _row_accent(row.seed, bg)
         block_h = ctx_block_h(len(lines))
         draw.rounded_rectangle(
-            (bar_x - _TEXT_GAP - 5, y, bar_x - _TEXT_GAP, y + block_h), radius=3, fill=(*accent, 220)
+            (_PADDING, y, _PADDING + _BAR_WIDTH, y + block_h), radius=_BAR_RADIUS, fill=(*accent, 220)
         )
-        _safe_emoji_text(img, draw, (text_left, y - 2), row.name, name_font_ctx, (*accent, 220))
+        draw.text((text_left, y - 2), row.name, font=name_font_ctx, fill=(*accent, 220))
         ty = y + _CTX_NAME_SIZE + 6
-        spans = _map_custom_emoji_spans(row.raw_text, row.text, row.entities)
-        for line, line_start in lines:
-            _draw_rich_line(
-                img, draw, (text_left, ty), line, line_start, body_font_ctx, text_color_ctx, spans, assets.custom_emojis
-            )
+        for line in lines:
+            draw.text((text_left, ty), line, font=body_font_ctx, fill=text_color_ctx)
             ty += line_h_ctx
         y += block_h + _ROW_GAP
 
-    accent = _row_accent(main_row, bg)
-    block_h = main_block_h(len(main_lines))
-    draw.rounded_rectangle((bar_x - _TEXT_GAP - 5, y, bar_x - _TEXT_GAP, y + block_h), radius=3, fill=(*accent, 255))
+    accent = _row_accent(main_row.seed, bg)
+    block_h = main_block_h(n_main_lines)
+    draw.rounded_rectangle((_PADDING, y, _PADDING + _BAR_WIDTH, y + block_h), radius=_BAR_RADIUS, fill=(*accent, 255))
 
-    name_x = text_left
-    _safe_emoji_text(img, draw, (name_x, y - 4), main_row.name, name_font_main, accent)
-    if assets.status:
-        name_w = probe_draw.textlength(main_row.name + " ", font=name_font_main)
-        icon = assets.status.resize((_STATUS_ICON_SIZE, _STATUS_ICON_SIZE), Image.LANCZOS)
-        img.paste(icon, (int(name_x + name_w), int(y - 4 + (_MAIN_NAME_SIZE - _STATUS_ICON_SIZE) // 2)), icon)
+    content_left = text_left
+    content_width = max_text_width
 
-    ty = y + _MAIN_NAME_SIZE + 10
-    main_spans = _map_custom_emoji_spans(main_row.raw_text, main_row.text, main_row.entities)
-    for line, line_start in main_lines:
+    if main_row.avatar is not None:
+        avatar_x = _CANVAS_SIDE - _PADDING - _AVATAR_SIZE
+        avatar_resized = main_row.avatar.resize((_AVATAR_SIZE, _AVATAR_SIZE), Image.LANCZOS)
+        img.paste(avatar_resized, (avatar_x, y), avatar_resized)
+        content_width = avatar_x - content_left - 12
+
+    ty = y - 4
+    if main_row.forwarded_from:
+        draw.text((content_left, ty), f"↪ Reenviado de {main_row.forwarded_from}", font=italic_font, fill=muted)
+        ty += forward_h
+
+    draw.text((content_left, ty), main_row.name, font=name_font_main, fill=accent)
+    ty += _MAIN_NAME_SIZE + 10
+
+    if reply_preview is not None:
+        box_w = content_width
+        rp_accent = _row_accent(reply_preview.seed, bg)
+        overlay_bg = _panel_color(bg)
+        draw.rounded_rectangle((content_left, ty, content_left + box_w, ty + reply_box_h - 8), radius=10, fill=(*overlay_bg, 255))
+        draw.rounded_rectangle((content_left + 6, ty + 6, content_left + 9, ty + reply_box_h - 14), radius=2, fill=(*rp_accent, 255))
+        draw.text((content_left + 16, ty + 6), reply_preview.name, font=small_bold_font, fill=rp_accent)
+        rp_lines = _wrap_and_truncate(draw, reply_preview.text.strip() or " ", small_font, box_w - 24, 1)
+        draw.text((content_left + 16, ty + 6 + _REPLY_PREVIEW_NAME_SIZE + 4), rp_lines[0], font=small_font, fill=text_color_ctx)
+        ty += reply_box_h
+
+    for line, idx in main_lines_with_idx:
         _draw_rich_line(
-            img, draw, (text_left, ty), line, line_start, body_font_main, text_color_main, main_spans, assets.custom_emojis
+            draw, (content_left, ty), line, idx, body_font_main, emoji_font,
+            text_color_main, main_row.emoji_spans, main_row.emoji_images, img,
         )
         ty += line_h_main
 
-    # Avatar de la persona citada: sobre la propia imagen del sticker, a la
-    # izquierda, superpuesto un poco a la tarjeta para que se vea como una
-    # sola pieza (igual que las tarjetas de ejemplo).
-    avatar_cy = min(max(canvas_h - _AVATAR_SIZE // 2 - 10, _AVATAR_SIZE // 2), canvas_h - _AVATAR_SIZE // 2) if canvas_h > _AVATAR_SIZE else canvas_h // 2
-    avatar_top = int(avatar_cy - _AVATAR_SIZE / 2)
-    if assets.avatar:
-        avatar_img = _to_circle(assets.avatar, _AVATAR_SIZE)
-    else:
-        avatar_img = _fallback_avatar(main_row.name, main_row.seed, _AVATAR_SIZE)
-    img.paste(avatar_img, (0, max(avatar_top, 0)), avatar_img)
+    if media_render is not None:
+        img.paste(media_render, (content_left, ty), media_render)
+        ty += media_render.size[1] + 12
+    elif main_row.attachment is not None:
+        att = main_row.attachment
+        overlay_bg = _panel_color(bg)
+        card_w = content_width
+        draw.rounded_rectangle((content_left, ty, content_left + card_w, ty + attachment_h - 8), radius=14, fill=(*overlay_bg, 255))
+        icon_font = _load_font(_REGULAR_FONT_PATHS, 30)
+        draw.text((content_left + 14, ty + 14), att.icon, font=icon_font, fill=text_color_main)
+        title_lines = _wrap_and_truncate(draw, att.title, name_font_ctx, card_w - 70, 1)
+        draw.text((content_left + 60, ty + 10), title_lines[0], font=name_font_ctx, fill=text_color_main)
+        if att.subtitle:
+            sub_lines = _wrap_and_truncate(draw, att.subtitle, body_font_ctx, card_w - 70, 1)
+            draw.text((content_left + 60, ty + 10 + _CTX_NAME_SIZE + 4), sub_lines[0], font=body_font_ctx, fill=muted)
 
     return img
 
@@ -664,31 +787,29 @@ def _to_bytes(img: Image.Image, as_webp: bool) -> io.BytesIO:
 async def q_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
     chat = update.effective_chat
+    bot = context.bot
 
     target = message.reply_to_message
     if not target:
         await message.reply_text(error("Responde a un mensaje con /q para citarlo."))
         return
 
-    main_row = _row_from_message(target)
-    if not main_row.text:
+    bg, as_image, reply_mode, count = _parse_command_args(context.args or [])
+
+    try:
+        await context.bot.send_chat_action(chat.id, "upload_photo" if as_image else "choose_sticker")
+    except Exception:  # noqa: BLE001
+        pass
+
+    main_row = await _row_from_message(bot, target, with_avatar=True, with_media=True)
+    if not main_row.text and main_row.attachment is None and main_row.media is None:
         await message.reply_text(
-            error("Ese mensaje no tiene texto para citar (son puros caracteres/emojis que no puedo dibujar).")
+            error("Ese mensaje no tiene nada que pueda citar (texto, imagen, etc.).")
         )
         return
 
-    bg, as_image, reply_mode, count = _parse_command_args(context.args or [])
-
     rows: list[_Row] = []
-    # /q r: si el mensaje que estamos citando a su vez respondía a otro
-    # mensaje, ese mensaje "padre" se agrega arriba, dentro de la misma
-    # tarjeta (más chico), tal como el mensaje respondido dentro de otro
-    # mensaje en el chat original.
-    if reply_mode and target.reply_to_message:
-        parent_row = _row_from_message(target.reply_to_message)
-        if parent_row.text:
-            rows.append(parent_row)
-    elif count > 0:
+    if count > 0:
         stubs = get_previous(chat.id, target.message_id, count)
         for stub in stubs:
             text = (stub.text or "").strip()
@@ -696,15 +817,17 @@ async def q_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 rows.append(_Row(name=_sanitize_text(stub.name) or "Usuario", text=_sanitize_text(text), seed=stub.user_id))
     rows.append(main_row)
 
-    try:
-        await context.bot.send_chat_action(chat.id, "upload_photo" if as_image else "choose_sticker")
-    except Exception:  # noqa: BLE001
-        pass
+    reply_preview: Optional[_ReplyPreview] = None
+    if reply_mode and target.reply_to_message:
+        parent = target.reply_to_message
+        pname, pseed = _sender_name(parent)
+        ptext = (parent.text or parent.caption or "").strip()
+        ptext = _sanitize_text(ptext) if ptext else _sanitize_text(describe_media(parent))
+        if ptext:
+            reply_preview = _ReplyPreview(name=_sanitize_text(pname) or "Usuario", text=ptext, seed=pseed)
 
-    assets = await _gather_assets(context.bot, main_row, rows)
-
     try:
-        card = _render_quote_card(rows, bg, rounded=not as_image, assets=assets)
+        card = _render_quote_card(rows, bg, rounded=not as_image, reply_preview=reply_preview)
         buf = _to_bytes(card, as_webp=not as_image)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Error generando la tarjeta de cita: %s", exc)
