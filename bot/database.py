@@ -183,6 +183,21 @@ CREATE TABLE IF NOT EXISTS donations (
     telegram_payment_charge_id TEXT,
     created_at                 INTEGER NOT NULL
 );
+
+-- Solicitudes de ingreso pendientes (grupos con "Aprobar nuevos
+-- miembros" activado). Telegram solo avisa una por una en vivo (update
+-- chat_join_request) y no deja pedir la lista completa después, así que
+-- las vamos guardando acá para poder aprobarlas en lote con /aceptar.
+CREATE TABLE IF NOT EXISTS join_requests (
+    chat_id      INTEGER NOT NULL,
+    user_id      INTEGER NOT NULL,
+    name         TEXT NOT NULL,
+    username     TEXT,
+    requested_at INTEGER NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending',
+    PRIMARY KEY (chat_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_join_requests_pending ON join_requests (chat_id, status, requested_at);
 """
 
 # Columnas que se añadieron después de la primera versión del esquema.
@@ -1156,4 +1171,55 @@ class Database:
         )
         row = await cursor.fetchone()
         return int(row["total"]) if row else 0
+
+    # ------------------------------------------------------------------ #
+    # Solicitudes de ingreso pendientes (/aceptar)
+    # ------------------------------------------------------------------ #
+    async def record_join_request(
+        self, chat_id: int, user_id: int, name: str, username: Optional[str]
+    ) -> None:
+        await self.conn.execute(
+            """
+            INSERT INTO join_requests (chat_id, user_id, name, username, requested_at, status)
+            VALUES (?, ?, ?, ?, ?, 'pending')
+            ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                name = excluded.name,
+                username = excluded.username,
+                requested_at = excluded.requested_at,
+                status = 'pending'
+            """,
+            (chat_id, user_id, name, username, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def count_pending_join_requests(self, chat_id: int) -> int:
+        cursor = await self.conn.execute(
+            "SELECT COUNT(*) AS c FROM join_requests WHERE chat_id = ? AND status = 'pending'", (chat_id,)
+        )
+        row = await cursor.fetchone()
+        return int(row["c"]) if row else 0
+
+    async def get_pending_join_requests(
+        self, chat_id: int, limit: Optional[int] = None
+    ) -> list[tuple[int, str, Optional[str]]]:
+        query = (
+            "SELECT user_id, name, username FROM join_requests "
+            "WHERE chat_id = ? AND status = 'pending' ORDER BY requested_at ASC"
+        )
+        params: list = [chat_id]
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
+        cursor = await self.conn.execute(query, params)
+        rows = await cursor.fetchall()
+        return [(row["user_id"], row["name"], row["username"]) for row in rows]
+
+    async def set_join_requests_status_bulk(self, chat_id: int, user_ids: list[int], status: str) -> None:
+        if not user_ids:
+            return
+        await self.conn.executemany(
+            "UPDATE join_requests SET status = ? WHERE chat_id = ? AND user_id = ?",
+            [(status, chat_id, uid) for uid in user_ids],
+        )
+        await self.conn.commit()
 

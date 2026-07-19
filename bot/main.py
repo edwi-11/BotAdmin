@@ -23,6 +23,7 @@ from telegram.ext import (
     Application,
     ApplicationBuilder,
     CallbackQueryHandler,
+    ChatJoinRequestHandler,
     ChatMemberHandler,
     CommandHandler,
     ContextTypes,
@@ -93,6 +94,7 @@ from handlers.recurring import _send_content as _send_broadcast_content
 from handlers.recurring import load_all_recurring_jobs, recurring_callback, try_consume_draft_input
 from handlers.quote_sticker import q_command
 from handlers.owner_groups import grupos_command
+from handlers.join_requests import aceptar_command, on_chat_join_request
 from handlers.donations import (
     donar_amount_callback,
     donar_command,
@@ -353,6 +355,10 @@ def build_application() -> Application:
 
     # --- Lista de grupos + links de invitación (solo el propietario) ---
     application.add_handler(CommandHandler("grupos", grupos_command))
+
+    # --- Solicitudes de ingreso (grupos con "Aprobar nuevos miembros") ---
+    application.add_handler(ChatJoinRequestHandler(on_chat_join_request))
+    application.add_handler(CommandHandler("aceptar", aceptar_command))
 
     # --- Moderación básica (los únicos comandos "/" que quedan) ---
     application.add_handler(CommandHandler("ban", ban_command))
