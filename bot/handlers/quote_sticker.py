@@ -564,37 +564,51 @@ async def _row_from_message(
     return row
 
 
+
 # --------------------------------------------------------------------- #
-# Render principal
+# Render principal — burbuja de chat con "cola" (estilo Telegram), un
+# único avatar semi-superpuesto en la esquina inferior izquierda de la
+# ÚLTIMA burbuja, y (si /q <n> se usó) varias burbujas del mismo
+# remitente apiladas y conectadas, tal como agrupa Telegram los mensajes
+# consecutivos de una misma persona. Nada de tarjetas separadas ni
+# barras de color: es el mismo diseño de siempre, solo que ahora también
+# sabe dibujar avatar, miniaturas, adjuntos, reenvíos y vista previa de
+# respuesta dentro de esa misma burbuja.
 # --------------------------------------------------------------------- #
 _CANVAS_SIDE = 512
-_PADDING = 28
-_BAR_WIDTH = 5
-_BAR_RADIUS = 3
-_TEXT_GAP = 16
-_ROW_GAP = 16
-_AVATAR_SIZE = 60
-_MEDIA_MAX = 220
+_OUTER_MARGIN = 24
+_AVATAR_SIZE = 84
+_BUBBLE_LEFT = _OUTER_MARGIN + _AVATAR_SIZE // 2
+_BUBBLE_MAX_RIGHT = _CANVAS_SIDE - _OUTER_MARGIN
+_BUBBLE_MAX_W = _BUBBLE_MAX_RIGHT - _BUBBLE_LEFT
+_BUBBLE_RADIUS = 30
+_BUBBLE_GAP = 7
+_PAD_X = 26
+_PAD_TOP = 18
+_PAD_BOTTOM = 20
+_MIN_BUBBLE_W = 150
 
-_MAIN_NAME_SIZE = 28
-_MAIN_TEXT_SIZE = 32
-_CTX_NAME_SIZE = 21
-_CTX_TEXT_SIZE = 24
-_CTX_MAX_LINES = 2
-_MAIN_MAX_LINES_CAP = 8
-_LINE_SPACING = 1.28
-_REPLY_PREVIEW_NAME_SIZE = 19
-_REPLY_PREVIEW_TEXT_SIZE = 19
+_NAME_SIZE = 32
+_TEXT_SIZE = 30
+_LINE_SPACING = 1.3
+_MAX_LINES = 8
+_NAME_TEXT_GAP = 10
+
+_REPLY_PREVIEW_NAME_SIZE = 20
+_REPLY_PREVIEW_TEXT_SIZE = 20
+_REPLY_PREVIEW_PAD = 12
 _FORWARD_LABEL_SIZE = 18
+_MEDIA_MAX_H = 230
+_ATTACHMENT_H = 76
 
 
 def _panel_color(bg: tuple[int, int, int]) -> tuple[int, int, int]:
-    """Un tono ligeramente distinto al fondo, para las tarjetas internas
-    (respuesta anidada, documento, audio, etc.) — más claro sobre fondos
-    oscuros, más oscuro sobre fondos claros, para que siempre se note."""
+    """Un tono ligeramente distinto al fondo, para paneles internos
+    (vista previa de respuesta, tarjeta de adjunto) — más claro sobre
+    fondos oscuros, más oscuro sobre fondos claros, para que se note."""
     if _text_is_light(bg):
         return tuple(max(0, c - 16) for c in bg)  # type: ignore[return-value]
-    return tuple(min(255, c + 14) for c in bg)  # type: ignore[return-value]
+    return tuple(min(255, c + 16) for c in bg)  # type: ignore[return-value]
 
 
 def _row_accent(seed: int, bg: tuple[int, int, int]) -> tuple[int, int, int]:
@@ -602,6 +616,119 @@ def _row_accent(seed: int, bg: tuple[int, int, int]) -> tuple[int, int, int]:
     if _text_is_light(bg):
         color = tuple(max(0, c - 60) for c in color)  # type: ignore[assignment]
     return color
+
+
+@dataclass(slots=True)
+class _Segment:
+    """Una burbuja dentro de la pila (una por mensaje)."""
+    name: str
+    seed: int
+    show_name: bool
+    lines: list[tuple[str, int]]          # (línea, índice_en_texto_original) — para emojis premium
+    emoji_spans: list[tuple[int, int, str]] = field(default_factory=list)
+    emoji_images: dict[str, Optional[Image.Image]] = field(default_factory=dict)
+    forwarded_from: Optional[str] = None
+    reply_preview: Optional[_ReplyPreview] = None
+    media: Optional[MediaThumb] = None
+    attachment: Optional[_Attachment] = None
+    is_last: bool = False
+
+
+def _build_segments(
+    rows: list[_Row],
+    reply_preview: Optional[_ReplyPreview],
+    draw: ImageDraw.ImageDraw,
+    name_font: ImageFont.FreeTypeFont,
+    text_font: ImageFont.FreeTypeFont,
+    max_text_width: int,
+) -> list[_Segment]:
+    segments: list[_Segment] = []
+    prev_seed: Optional[int] = None
+    for i, row in enumerate(rows):
+        is_last = i == len(rows) - 1
+        show_name = prev_seed is None or row.seed != prev_seed
+        prev_seed = row.seed
+
+        lines = (
+            _wrap_preserving_emoji_spans(draw, row.text, text_font, max_text_width, _MAX_LINES)
+            if row.text.strip()
+            else []
+        )
+        segments.append(
+            _Segment(
+                name=row.name,
+                seed=row.seed,
+                show_name=show_name,
+                lines=lines,
+                emoji_spans=row.emoji_spans if is_last else [],
+                emoji_images=row.emoji_images if is_last else {},
+                forwarded_from=row.forwarded_from if is_last else None,
+                reply_preview=reply_preview if is_last else None,
+                media=row.media if is_last else None,
+                attachment=row.attachment if is_last else None,
+                is_last=is_last,
+            )
+        )
+    return segments
+
+
+def _segment_metrics(
+    seg: _Segment,
+    draw: ImageDraw.ImageDraw,
+    name_font: ImageFont.FreeTypeFont,
+    text_font: ImageFont.FreeTypeFont,
+    small_font: ImageFont.FreeTypeFont,
+    small_bold_font: ImageFont.FreeTypeFont,
+    italic_font: ImageFont.FreeTypeFont,
+    line_h: int,
+) -> tuple[int, int, Optional[Image.Image], list[str]]:
+    """Devuelve (ancho_contenido, alto_total, miniatura_ya_recortada, líneas_de_preview)."""
+    content_w = 0
+    content_h = 0
+
+    if seg.show_name:
+        content_w = max(content_w, int(draw.textlength(seg.name, font=name_font)))
+        content_h += _NAME_SIZE + _NAME_TEXT_GAP
+
+    if seg.forwarded_from:
+        label = f"↪ Reenviado de {seg.forwarded_from}"
+        content_w = max(content_w, int(draw.textlength(label, font=italic_font)))
+        content_h += _FORWARD_LABEL_SIZE + 6
+
+    rp_lines: list[str] = []
+    if seg.reply_preview is not None:
+        rp = seg.reply_preview
+        avail = _BUBBLE_MAX_W - _PAD_X * 2 - _REPLY_PREVIEW_PAD * 2
+        rp_lines = _wrap_and_truncate(draw, rp.text.strip() or " ", small_font, avail, 1)
+        rp_w = max(
+            int(draw.textlength(rp.name, font=small_bold_font)),
+            int(draw.textlength(rp_lines[0], font=small_font)),
+        ) + _REPLY_PREVIEW_PAD * 2 + 10
+        content_w = max(content_w, rp_w)
+        content_h += _REPLY_PREVIEW_NAME_SIZE + 6 + int(_REPLY_PREVIEW_TEXT_SIZE * 1.3) + _REPLY_PREVIEW_PAD + 6
+
+    for line, _idx in seg.lines:
+        content_w = max(content_w, int(draw.textlength(line, font=text_font)))
+    if seg.lines:
+        content_h += len(seg.lines) * line_h
+
+    media_render: Optional[Image.Image] = None
+    if seg.media is not None:
+        avail_w = _BUBBLE_MAX_W - _PAD_X * 2
+        fitted = fit_within(seg.media.image, avail_w, _MEDIA_MAX_H)
+        media_render = rounded_crop(fitted, fitted.size[0], fitted.size[1], 18)
+        content_w = max(content_w, media_render.size[0])
+        content_h += media_render.size[1] + 10
+
+    if seg.attachment is not None and media_render is None:
+        content_w = max(content_w, _BUBBLE_MAX_W - _PAD_X * 2)
+        content_h += _ATTACHMENT_H
+
+    if content_w == 0:
+        content_w = int(draw.textlength(" ", font=text_font)) or 20
+
+    content_w = min(content_w, _BUBBLE_MAX_W - _PAD_X * 2)
+    return content_w, content_h, media_render, rp_lines
 
 
 def _render_quote_card(
@@ -613,158 +740,118 @@ def _render_quote_card(
     if not rows:
         rows = [_Row(name="Usuario", text="", seed=0)]
 
-    text_color_main = (30, 30, 32) if _text_is_light(bg) else (245, 245, 245)
-    text_color_ctx = tuple((m + b) // 2 for m, b in zip(text_color_main, bg))
-    muted = tuple((m + b) // 2 for m, b in zip(text_color_ctx, bg))
+    text_color = (30, 30, 32) if _text_is_light(bg) else (245, 245, 245)
+    muted = tuple((m + b) // 2 for m, b in zip(text_color, bg))
 
-    body_font_main = _load_font(_REGULAR_FONT_PATHS, _MAIN_TEXT_SIZE)
-    body_font_ctx = _load_font(_REGULAR_FONT_PATHS, _CTX_TEXT_SIZE)
-    name_font_main = _load_font(_BOLD_FONT_PATHS, _MAIN_NAME_SIZE)
-    name_font_ctx = _load_font(_BOLD_FONT_PATHS, _CTX_NAME_SIZE)
+    name_font = _load_font(_BOLD_FONT_PATHS, _NAME_SIZE)
+    text_font = _load_font(_REGULAR_FONT_PATHS, _TEXT_SIZE)
     small_font = _load_font(_REGULAR_FONT_PATHS, _REPLY_PREVIEW_TEXT_SIZE)
     small_bold_font = _load_font(_BOLD_FONT_PATHS, _REPLY_PREVIEW_NAME_SIZE)
     italic_font = _load_font(_ITALIC_FONT_PATHS or _REGULAR_FONT_PATHS, _FORWARD_LABEL_SIZE)
+    icon_font = _load_font(_REGULAR_FONT_PATHS, 30)
     emoji_font = _load_color_emoji_font()
 
-    text_left = _PADDING + _BAR_WIDTH + _TEXT_GAP
-    max_text_width = _CANVAS_SIDE - text_left - _PADDING
+    line_h = int(_TEXT_SIZE * _LINE_SPACING)
+    max_text_width = _BUBBLE_MAX_W - _PAD_X * 2
 
     probe = Image.new("RGBA", (10, 10))
     probe_draw = ImageDraw.Draw(probe)
 
-    line_h_ctx = int(_CTX_TEXT_SIZE * _LINE_SPACING)
-    line_h_main = int(_MAIN_TEXT_SIZE * _LINE_SPACING)
+    segments = _build_segments(rows, reply_preview, probe_draw, name_font, text_font, max_text_width)
 
-    *context_rows, main_row = rows
-
-    forward_h = (_FORWARD_LABEL_SIZE + 6) if main_row.forwarded_from else 0
-
-    reply_box_h = 0
-    if reply_preview is not None:
-        reply_box_h = _REPLY_PREVIEW_NAME_SIZE + 6 + int(_REPLY_PREVIEW_TEXT_SIZE * 1.3) + 18
-
-    media_h = 0
-    media_render: Optional[Image.Image] = None
-    if main_row.media is not None:
-        fitted = fit_within(main_row.media.image, _CANVAS_SIDE - _PADDING * 2, _MEDIA_MAX)
-        media_render = rounded_crop(fitted, fitted.size[0], fitted.size[1], 18)
-        media_h = media_render.size[1] + 12
-
-    attachment_h = 0
-    if main_row.attachment is not None and media_render is None:
-        attachment_h = 74
-
-    def ctx_block_h(n_lines: int) -> int:
-        return _CTX_NAME_SIZE + 8 + n_lines * line_h_ctx
-
-    def main_block_h(n_lines: int) -> int:
-        extra = forward_h + reply_box_h
-        text_h = n_lines * line_h_main if main_row.text.strip() else 0
-        return _MAIN_NAME_SIZE + 10 + extra + text_h + media_h + attachment_h
-
-    available_h = _CANVAS_SIDE - _PADDING * 2
-    min_main_h = main_block_h(1 if main_row.text.strip() else 0)
-
-    kept: list[tuple[_Row, list[str]]] = []
-    used_h = 0
-    for row in reversed(context_rows):
-        lines = _wrap_and_truncate(probe_draw, row.text.strip() or " ", body_font_ctx, max_text_width, _CTX_MAX_LINES)
-        block_h = ctx_block_h(len(lines)) + _ROW_GAP
-        if used_h + block_h + min_main_h > available_h:
-            break
-        kept.append((row, lines))
-        used_h += block_h
-    kept.reverse()
-
-    remaining_for_main = available_h - used_h
-    fixed_main = forward_h + reply_box_h + media_h + attachment_h + _MAIN_NAME_SIZE + 10
-    max_main_lines = max(0, (remaining_for_main - fixed_main) // line_h_main)
-    max_main_lines = min(max_main_lines, _MAIN_MAX_LINES_CAP)
-    main_lines_with_idx: list[tuple[str, int]] = []
-    if main_row.text.strip() and max_main_lines > 0:
-        main_lines_with_idx = _wrap_preserving_emoji_spans(
-            probe_draw, main_row.text, body_font_main, max_text_width, max_main_lines
+    metrics = []
+    for seg in segments:
+        content_w, content_h, media_render, rp_lines = _segment_metrics(
+            seg, probe_draw, name_font, text_font, small_font, small_bold_font, italic_font, line_h
         )
-    n_main_lines = len(main_lines_with_idx)
+        bubble_w = max(_MIN_BUBBLE_W, content_w + _PAD_X * 2)
+        bubble_h = content_h + _PAD_TOP + _PAD_BOTTOM
+        metrics.append((bubble_w, bubble_h, media_render, rp_lines))
 
-    content_h = used_h + main_block_h(n_main_lines)
-    canvas_h = min(_CANVAS_SIDE, max(120, _PADDING * 2 + content_h))
+    total_h = _OUTER_MARGIN + sum(m[1] for m in metrics) + _BUBBLE_GAP * (len(metrics) - 1) + _OUTER_MARGIN
+    total_h += _AVATAR_SIZE // 2  # espacio para que el avatar no se corte abajo
+    canvas_h = min(_CANVAS_SIDE, max(140, int(total_h)))
 
     img = Image.new("RGBA", (_CANVAS_SIDE, canvas_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    if rounded:
-        draw.rounded_rectangle((0, 0, _CANVAS_SIDE - 1, canvas_h - 1), radius=40, fill=(*bg, 255))
-    else:
-        draw.rectangle((0, 0, _CANVAS_SIDE - 1, canvas_h - 1), fill=(*bg, 255))
 
-    y = _PADDING
-    for row, lines in kept:
-        accent = _row_accent(row.seed, bg)
-        block_h = ctx_block_h(len(lines))
-        draw.rounded_rectangle(
-            (_PADDING, y, _PADDING + _BAR_WIDTH, y + block_h), radius=_BAR_RADIUS, fill=(*accent, 220)
-        )
-        draw.text((text_left, y - 2), row.name, font=name_font_ctx, fill=(*accent, 220))
-        ty = y + _CTX_NAME_SIZE + 6
-        for line in lines:
-            draw.text((text_left, ty), line, font=body_font_ctx, fill=text_color_ctx)
-            ty += line_h_ctx
-        y += block_h + _ROW_GAP
+    y = _OUTER_MARGIN
+    last_bottom = y
+    for i, (seg, (bubble_w, bubble_h, media_render, rp_lines)) in enumerate(zip(segments, metrics)):
+        accent = _row_accent(seg.seed, bg)
+        x0, y0 = _BUBBLE_LEFT, y
+        x1, y1 = _BUBBLE_LEFT + bubble_w, y + bubble_h
+        # esquina inferior-izquierda cuadrada SOLO en la última burbuja (la "cola")
+        corner_flags = (True, True, True, not seg.is_last)
+        if rounded:
+            draw.rounded_rectangle(
+                (x0, y0, x1, y1), radius=_BUBBLE_RADIUS, fill=(*bg, 255), corners=corner_flags
+            )
+        else:
+            draw.rectangle((x0, y0, x1, y1), fill=(*bg, 255))
 
-    accent = _row_accent(main_row.seed, bg)
-    block_h = main_block_h(n_main_lines)
-    draw.rounded_rectangle((_PADDING, y, _PADDING + _BAR_WIDTH, y + block_h), radius=_BAR_RADIUS, fill=(*accent, 255))
+        ty = y0 + _PAD_TOP
+        tx = x0 + _PAD_X
 
-    content_left = text_left
-    content_width = max_text_width
+        if seg.show_name:
+            draw.text((tx, ty), seg.name, font=name_font, fill=accent)
+            ty += _NAME_SIZE + _NAME_TEXT_GAP
 
+        if seg.forwarded_from:
+            draw.text((tx, ty), f"↪ Reenviado de {seg.forwarded_from}", font=italic_font, fill=muted)
+            ty += _FORWARD_LABEL_SIZE + 6
+
+        if seg.reply_preview is not None:
+            rp = seg.reply_preview
+            rp_accent = _row_accent(rp.seed, bg)
+            panel_bg = _panel_color(bg)
+            panel_h = _REPLY_PREVIEW_NAME_SIZE + 6 + int(_REPLY_PREVIEW_TEXT_SIZE * 1.3) + _REPLY_PREVIEW_PAD
+            panel_w = bubble_w - _PAD_X * 2
+            draw.rounded_rectangle((tx, ty, tx + panel_w, ty + panel_h), radius=10, fill=(*panel_bg, 255))
+            draw.rounded_rectangle(
+                (tx + 6, ty + 6, tx + 9, ty + panel_h - 6), radius=2, fill=(*rp_accent, 255)
+            )
+            draw.text((tx + 16, ty + 6), rp.name, font=small_bold_font, fill=rp_accent)
+            draw.text(
+                (tx + 16, ty + 6 + _REPLY_PREVIEW_NAME_SIZE + 4),
+                rp_lines[0] if rp_lines else "",
+                font=small_font, fill=muted,
+            )
+            ty += panel_h + 6
+
+        for line, idx in seg.lines:
+            _draw_rich_line(
+                draw, (tx, ty), line, idx, text_font, emoji_font,
+                text_color, seg.emoji_spans, seg.emoji_images, img,
+            )
+            ty += line_h
+
+        if media_render is not None:
+            img.paste(media_render, (tx, ty), media_render)
+            ty += media_render.size[1] + 10
+        elif seg.attachment is not None:
+            att = seg.attachment
+            panel_bg = _panel_color(bg)
+            card_w = bubble_w - _PAD_X * 2
+            draw.rounded_rectangle((tx, ty, tx + card_w, ty + _ATTACHMENT_H - 8), radius=14, fill=(*panel_bg, 255))
+            draw.text((tx + 14, ty + 14), att.icon, font=icon_font, fill=text_color)
+            title_lines = _wrap_and_truncate(draw, att.title, small_bold_font, card_w - 70, 1)
+            draw.text((tx + 60, ty + 10), title_lines[0], font=small_bold_font, fill=text_color)
+            if att.subtitle:
+                sub_lines = _wrap_and_truncate(draw, att.subtitle, small_font, card_w - 70, 1)
+                draw.text((tx + 60, ty + 10 + _REPLY_PREVIEW_NAME_SIZE + 4), sub_lines[0], font=small_font, fill=muted)
+
+        last_bottom = y1
+        y = y1 + _BUBBLE_GAP
+
+    # avatar: un único círculo, centrado en la esquina inferior-izquierda
+    # de la ÚLTIMA burbuja (la que tiene la "cola"), igual que Telegram.
+    main_row = rows[-1]
     if main_row.avatar is not None:
-        avatar_x = _CANVAS_SIDE - _PADDING - _AVATAR_SIZE
         avatar_resized = main_row.avatar.resize((_AVATAR_SIZE, _AVATAR_SIZE), Image.LANCZOS)
-        img.paste(avatar_resized, (avatar_x, y), avatar_resized)
-        content_width = avatar_x - content_left - 12
-
-    ty = y - 4
-    if main_row.forwarded_from:
-        draw.text((content_left, ty), f"↪ Reenviado de {main_row.forwarded_from}", font=italic_font, fill=muted)
-        ty += forward_h
-
-    draw.text((content_left, ty), main_row.name, font=name_font_main, fill=accent)
-    ty += _MAIN_NAME_SIZE + 10
-
-    if reply_preview is not None:
-        box_w = content_width
-        rp_accent = _row_accent(reply_preview.seed, bg)
-        overlay_bg = _panel_color(bg)
-        draw.rounded_rectangle((content_left, ty, content_left + box_w, ty + reply_box_h - 8), radius=10, fill=(*overlay_bg, 255))
-        draw.rounded_rectangle((content_left + 6, ty + 6, content_left + 9, ty + reply_box_h - 14), radius=2, fill=(*rp_accent, 255))
-        draw.text((content_left + 16, ty + 6), reply_preview.name, font=small_bold_font, fill=rp_accent)
-        rp_lines = _wrap_and_truncate(draw, reply_preview.text.strip() or " ", small_font, box_w - 24, 1)
-        draw.text((content_left + 16, ty + 6 + _REPLY_PREVIEW_NAME_SIZE + 4), rp_lines[0], font=small_font, fill=text_color_ctx)
-        ty += reply_box_h
-
-    for line, idx in main_lines_with_idx:
-        _draw_rich_line(
-            draw, (content_left, ty), line, idx, body_font_main, emoji_font,
-            text_color_main, main_row.emoji_spans, main_row.emoji_images, img,
-        )
-        ty += line_h_main
-
-    if media_render is not None:
-        img.paste(media_render, (content_left, ty), media_render)
-        ty += media_render.size[1] + 12
-    elif main_row.attachment is not None:
-        att = main_row.attachment
-        overlay_bg = _panel_color(bg)
-        card_w = content_width
-        draw.rounded_rectangle((content_left, ty, content_left + card_w, ty + attachment_h - 8), radius=14, fill=(*overlay_bg, 255))
-        icon_font = _load_font(_REGULAR_FONT_PATHS, 30)
-        draw.text((content_left + 14, ty + 14), att.icon, font=icon_font, fill=text_color_main)
-        title_lines = _wrap_and_truncate(draw, att.title, name_font_ctx, card_w - 70, 1)
-        draw.text((content_left + 60, ty + 10), title_lines[0], font=name_font_ctx, fill=text_color_main)
-        if att.subtitle:
-            sub_lines = _wrap_and_truncate(draw, att.subtitle, body_font_ctx, card_w - 70, 1)
-            draw.text((content_left + 60, ty + 10 + _CTX_NAME_SIZE + 4), sub_lines[0], font=body_font_ctx, fill=muted)
+        ax = _BUBBLE_LEFT - _AVATAR_SIZE // 2
+        ay = last_bottom - _AVATAR_SIZE // 2
+        img.paste(avatar_resized, (ax, ay), avatar_resized)
 
     return img
 
