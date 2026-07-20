@@ -66,6 +66,7 @@ from utils.telegram_media import (
     fetch_avatar,
     fetch_custom_emoji_images,
     fetch_message_media,
+    fetch_unicode_emoji_images,
     fit_within,
     rounded_crop,
 )
@@ -192,6 +193,62 @@ def _split_runs(text: str) -> list[tuple[str, bool]]:
             current_is_emoji = is_emoji
     runs.append((current, current_is_emoji))
     return runs
+
+
+_REGIONAL_INDICATOR = (0x1F1E6, 0x1F1FF)
+_SKIN_TONES = (0x1F3FB, 0x1F3FF)
+
+
+def _emoji_clusters(run: str) -> list[str]:
+    """Divide un tramo YA sabido-todo-emoji en 'clusters' (cada uno es un
+    solo emoji visual): agrupa banderas (2 indicadores regionales), y
+    secuencias unidas con ZWJ (familias, profesiones con género, etc.) y
+    sus modificadores de tono de piel / selectores de variación, para
+    poder pedir/pegar UNA imagen por emoji visual en vez de una por
+    carácter suelto."""
+    clusters: list[str] = []
+    i, n = 0, len(run)
+    while i < n:
+        code = ord(run[i])
+        if _REGIONAL_INDICATOR[0] <= code <= _REGIONAL_INDICATOR[1] and i + 1 < n and (
+            _REGIONAL_INDICATOR[0] <= ord(run[i + 1]) <= _REGIONAL_INDICATOR[1]
+        ):
+            clusters.append(run[i:i + 2])
+            i += 2
+            continue
+
+        j = i + 1
+
+        def _consume_modifiers(j: int) -> int:
+            while j < n and (ord(run[j]) in _VARIATION_SELECTORS or _SKIN_TONES[0] <= ord(run[j]) <= _SKIN_TONES[1]):
+                j += 1
+            return j
+
+        j = _consume_modifiers(j)
+        while j < n and ord(run[j]) == 0x200D and j + 1 < n:
+            j += 2  # ZWJ + el siguiente carácter base
+            j = _consume_modifiers(j)
+
+        clusters.append(run[i:j])
+        i = j
+    return clusters
+
+
+_VARIATION_SELECTORS = {0xFE0E, 0xFE0F}
+
+
+def _collect_emoji_clusters(*texts: str) -> set[str]:
+    """Todos los clusters de emoji unicode 'normales' presentes en `texts`
+    (nombre, mensaje, vista previa de respuesta, etc.), listos para
+    pedirle sus imágenes a utils.telegram_media.fetch_unicode_emoji_images."""
+    found: set[str] = set()
+    for text in texts:
+        if not text:
+            continue
+        for run_text, is_emoji in _split_runs(text):
+            if is_emoji:
+                found.update(_emoji_clusters(run_text))
+    return found
 
 
 # --------------------------------------------------------------------- #
@@ -352,11 +409,16 @@ def _wrap_preserving_emoji_spans(
 
 
 # --------------------------------------------------------------------- #
-# Dibuja una línea de texto, sustituyendo emojis premium por su imagen
-# real (si se pudo descargar) y usando la fuente de emoji a color (si hay)
-# para el resto de los emojis unicode normales.
+# Dibuja texto (nombre O mensaje — se usa para ambos) sustituyendo:
+#   1) emojis premium (custom_emoji) por su imagen real, si se descargó;
+#   2) emojis unicode normales por su imagen real (estilo Twemoji), si se
+#      descargó;
+#   3) y solo si ninguna de las dos está disponible, cae a dibujar el
+#      carácter con la fuente de emoji-color del sistema (si hay) o, en
+#      último caso, con la fuente de texto normal (riesgo de "tofu").
+# Devuelve el ancho total dibujado (útil si hace falta medir de nuevo).
 # --------------------------------------------------------------------- #
-def _draw_rich_line(
+def _draw_rich_text(
     draw: ImageDraw.ImageDraw,
     xy: tuple[int, int],
     line: str,
@@ -364,53 +426,65 @@ def _draw_rich_line(
     font: ImageFont.FreeTypeFont,
     emoji_font: Optional[ImageFont.FreeTypeFont],
     fill: tuple[int, int, int],
-    emoji_spans: list[tuple[int, int, str]],
-    emoji_images: dict[str, Optional[Image.Image]],
+    custom_spans: list[tuple[int, int, str]],
+    custom_images: dict[str, Optional[Image.Image]],
+    unicode_images: dict[str, Optional[Image.Image]],
     canvas: Image.Image,
-) -> None:
+) -> int:
     x, y = xy
+    start_x = x
     font_size = font.size
     pos = 0  # índice dentro de `line`
     while pos < len(line):
         abs_idx = line_start_idx + pos
 
-        # ¿Este punto cae dentro de un emoji premium con imagen descargada?
+        # 1) ¿Emoji premium con imagen ya descargada en este punto?
         custom = next(
-            (s for s in emoji_spans if s[0] <= abs_idx < s[1] and emoji_images.get(s[2]) is not None), None
+            (s for s in custom_spans if s[0] <= abs_idx < s[1] and custom_images.get(s[2]) is not None), None
         )
         if custom:
             _, span_end, emoji_id = custom
             span_len_in_line = min(span_end, line_start_idx + len(line)) - abs_idx
-            img = emoji_images[emoji_id]
-            side = font_size
-            paste = img.convert("RGBA").resize((side, side), Image.LANCZOS)
+            paste = custom_images[emoji_id].convert("RGBA").resize((font_size, font_size), Image.LANCZOS)
             canvas.paste(paste, (int(x), int(y)), paste)
-            x += side
+            x += font_size
             pos += span_len_in_line
             continue
 
-        # Si no, dibujamos el siguiente "run" (texto normal o emoji unicode)
         rest = line[pos:]
         run_text, run_is_emoji = _split_runs(rest)[0]
-        # No cruzar hacia un emoji premium ya cubierto: recortamos el run
-        # si un span premium empieza en el medio.
-        for s in emoji_spans:
-            if s[0] > abs_idx and s[0] < abs_idx + len(run_text) and emoji_images.get(s[2]) is not None:
+        # No cruzar hacia un emoji premium ya cubierto más adelante en el run.
+        for s in custom_spans:
+            if s[0] > abs_idx and s[0] < abs_idx + len(run_text) and custom_images.get(s[2]) is not None:
                 run_text = run_text[: s[0] - abs_idx]
                 break
 
-        use_font = emoji_font if (run_is_emoji and emoji_font is not None) else font
-        try:
-            if run_is_emoji and emoji_font is not None:
-                draw.text((x, y), run_text, font=use_font, embedded_color=True)
-            else:
-                draw.text((x, y), run_text, font=use_font, fill=fill)
-        except OSError:
-            # Alguna fuente de emoji-color puede fallar con ciertos tamaños;
-            # si pasa, se cae de nuevo a la fuente de texto normal.
+        if not run_is_emoji:
             draw.text((x, y), run_text, font=font, fill=fill)
-        x += draw.textlength(run_text, font=use_font)
+            x += draw.textlength(run_text, font=font)
+            pos += len(run_text)
+            continue
+
+        # 2) Emoji(s) unicode normales: un cluster (un emoji visual) a la vez.
+        for cluster in _emoji_clusters(run_text):
+            img = unicode_images.get(cluster)
+            if img is not None:
+                paste = img.convert("RGBA").resize((font_size, font_size), Image.LANCZOS)
+                canvas.paste(paste, (int(x), int(y)), paste)
+                x += font_size
+            elif emoji_font is not None:
+                try:
+                    draw.text((x, y), cluster, font=emoji_font, embedded_color=True)
+                    x += draw.textlength(cluster, font=emoji_font)
+                except OSError:
+                    draw.text((x, y), cluster, font=font, fill=fill)
+                    x += draw.textlength(cluster, font=font)
+            else:
+                draw.text((x, y), cluster, font=font, fill=fill)
+                x += draw.textlength(cluster, font=font)
         pos += len(run_text)
+
+    return int(x - start_x)
 
 
 # --------------------------------------------------------------------- #
@@ -736,9 +810,11 @@ def _render_quote_card(
     bg: tuple[int, int, int],
     rounded: bool,
     reply_preview: Optional[_ReplyPreview],
+    unicode_images: Optional[dict[str, Optional[Image.Image]]] = None,
 ) -> Image.Image:
     if not rows:
         rows = [_Row(name="Usuario", text="", seed=0)]
+    unicode_images = unicode_images or {}
 
     text_color = (30, 30, 32) if _text_is_light(bg) else (245, 245, 245)
     muted = tuple((m + b) // 2 for m, b in zip(text_color, bg))
@@ -794,7 +870,10 @@ def _render_quote_card(
         tx = x0 + _PAD_X
 
         if seg.show_name:
-            draw.text((tx, ty), seg.name, font=name_font, fill=accent)
+            _draw_rich_text(
+                draw, (tx, ty), seg.name, 0, name_font, emoji_font,
+                accent, [], {}, unicode_images, img,
+            )
             ty += _NAME_SIZE + _NAME_TEXT_GAP
 
         if seg.forwarded_from:
@@ -811,18 +890,21 @@ def _render_quote_card(
             draw.rounded_rectangle(
                 (tx + 6, ty + 6, tx + 9, ty + panel_h - 6), radius=2, fill=(*rp_accent, 255)
             )
-            draw.text((tx + 16, ty + 6), rp.name, font=small_bold_font, fill=rp_accent)
-            draw.text(
-                (tx + 16, ty + 6 + _REPLY_PREVIEW_NAME_SIZE + 4),
-                rp_lines[0] if rp_lines else "",
-                font=small_font, fill=muted,
+            _draw_rich_text(
+                draw, (tx + 16, ty + 6), rp.name, 0, small_bold_font, emoji_font,
+                rp_accent, [], {}, unicode_images, img,
+            )
+            rp_text = rp_lines[0] if rp_lines else ""
+            _draw_rich_text(
+                draw, (tx + 16, ty + 6 + _REPLY_PREVIEW_NAME_SIZE + 4), rp_text, 0, small_font, emoji_font,
+                muted, [], {}, unicode_images, img,
             )
             ty += panel_h + 6
 
         for line, idx in seg.lines:
-            _draw_rich_line(
+            _draw_rich_text(
                 draw, (tx, ty), line, idx, text_font, emoji_font,
-                text_color, seg.emoji_spans, seg.emoji_images, img,
+                text_color, seg.emoji_spans, seg.emoji_images, unicode_images, img,
             )
             ty += line_h
 
@@ -913,8 +995,20 @@ async def q_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if ptext:
             reply_preview = _ReplyPreview(name=_sanitize_text(pname) or "Usuario", text=ptext, seed=pseed)
 
+    texts_to_scan = [t for row in rows for t in (row.name, row.text)]
+    if reply_preview:
+        texts_to_scan += [reply_preview.name, reply_preview.text]
+    clusters = _collect_emoji_clusters(*texts_to_scan)
     try:
-        card = _render_quote_card(rows, bg, rounded=not as_image, reply_preview=reply_preview)
+        unicode_images = await fetch_unicode_emoji_images(clusters) if clusters else {}
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("No pude traer las imágenes de emoji unicode: %s", exc)
+        unicode_images = {}
+
+    try:
+        card = _render_quote_card(
+            rows, bg, rounded=not as_image, reply_preview=reply_preview, unicode_images=unicode_images
+        )
         buf = _to_bytes(card, as_webp=not as_image)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Error generando la tarjeta de cita: %s", exc)
