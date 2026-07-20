@@ -39,11 +39,17 @@ Limitaciones que vienen de la Bot API de Telegram y no se pueden evitar:
     - La ubicación se muestra como tarjeta con coordenadas, no como mapa
       real (necesitaría una API de mapas con su propia clave).
 
-Requiere Pillow (ya en requirements.txt). Para emojis a color de verdad
-hace falta una fuente de emoji-color instalada en el servidor, por ejemplo:
-    apt install -y fonts-noto-color-emoji fonts-dejavu-core
-Sin esa fuente, los emojis se siguen mostrando (con la fuente normal, en
-blanco y negro / contorno) en vez de desaparecer.
+Requiere Pillow (ya en requirements.txt). El texto se dibuja con las
+fuentes DejaVu Sans que vienen EMPAQUETADAS en `bot/assets/fonts/` (no
+dependen de que el servidor tenga fuentes instaladas — si a esa carpeta
+le falta algún archivo, cae a buscarlas en el sistema, y si tampoco las
+encuentra ahí, Pillow usa una fuente de emergencia minúscula que hace
+que todo el texto/espaciado se vea roto; por eso es importante que la
+carpeta `assets/fonts/` viaje junto con este archivo).
+Para emojis a color de verdad hace falta una fuente de emoji-color
+instalada en el servidor (opcional, ej. `apt install fonts-noto-color-emoji`)
+— pero los emojis NORMALES ya no dependen de esto: se descargan como
+imagen (ver utils/telegram_media.py) la primera vez que aparecen.
 """
 from __future__ import annotations
 
@@ -52,6 +58,7 @@ import logging
 import random
 import unicodedata
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFont
@@ -74,24 +81,34 @@ from utils.telegram_media import (
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------- #
-# Fuentes
+# Fuentes — primero se busca la que viaja EMPAQUETADA con el bot en
+# bot/assets/fonts/ (así funciona igual sin importar qué tenga instalado
+# el servidor); si por algo falta ese archivo, se prueban rutas típicas
+# del sistema como respaldo.
 # --------------------------------------------------------------------- #
+_ASSETS_FONTS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+
 _REGULAR_FONT_PATHS = [
+    str(_ASSETS_FONTS_DIR / "DejaVuSans.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
 ]
 _BOLD_FONT_PATHS = [
+    str(_ASSETS_FONTS_DIR / "DejaVuSans-Bold.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
 ]
 _ITALIC_FONT_PATHS = [
+    str(_ASSETS_FONTS_DIR / "DejaVuSans-Oblique.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
     "/usr/share/fonts/truetype/noto/NotoSans-Italic.ttf",
 ]
-# Fuente de emoji A COLOR (opcional). Si el servidor no la tiene instalada,
-# los emojis se dibujan con la fuente normal (se ven como contornos/"tofu").
+# Fuente de emoji A COLOR (opcional, del sistema). Si no está, los emojis
+# normales igual se ven bien porque se descargan como imagen (ver
+# utils/telegram_media.fetch_unicode_emoji_images); esta fuente es solo
+# un respaldo extra para el caso en que la descarga falle.
 _COLOR_EMOJI_FONT_PATHS = [
     "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
     "/usr/share/fonts/noto/NotoColorEmoji.ttf",
@@ -112,8 +129,19 @@ def _load_font(paths: list[str], size: int) -> ImageFont.FreeTypeFont:
             return font
         except OSError:
             continue
-    logger.warning("No se encontró ninguna fuente TrueType en %s, usando la de Pillow por defecto.", paths)
-    font = ImageFont.load_default()
+    logger.warning(
+        "No se encontró ninguna fuente TrueType en %s (¿falta la carpeta bot/assets/fonts/?). "
+        "Usando la fuente de respaldo de Pillow a tamaño %s.",
+        paths, size,
+    )
+    try:
+        # Pillow >= 10.1: load_default(size=...) devuelve una fuente
+        # escalable de verdad, no el bitmap fijo diminuto de versiones
+        # viejas — así que aunque falten TODAS las fuentes, el layout no
+        # queda roto/desalineado.
+        font = ImageFont.load_default(size=size)
+    except TypeError:
+        font = ImageFont.load_default()
     _font_cache[key] = font
     return font
 
