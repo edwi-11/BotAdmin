@@ -3,7 +3,10 @@ utils/telegram_media.py
 Helpers para /q (quote_sticker.py): descargar y preparar en memoria
 (como imágenes Pillow) todo lo que la tarjeta de cita necesita pedirle
 a la API de Telegram — foto de perfil, miniaturas de fotos/stickers/
-video/GIF, y las imágenes de los emojis premium (custom_emoji).
+video/GIF, las imágenes de los emojis premium (custom_emoji), y las
+imágenes de los emojis unicode normales (estilo Twemoji, descargadas
+de GitHub) para que el nombre y el texto se vean igual sin depender de
+que el servidor tenga una fuente de emoji-color instalada.
 
 Todo lo de acá es "best effort": si algo falla (sin conexión, el bot no
 tiene permiso, el archivo ya no existe, etc.) las funciones devuelven
@@ -17,13 +20,20 @@ Limitaciones conocidas (no hay forma de evitarlas solo con la Bot API):
   Telegram sí manda (`thumbnail`), y si no hay, se omite.
 - Stickers/GIFs en VIDEO (.webm) tampoco se pueden decodificar sin
   `ffmpeg`/`av`. Mismo fallback: se usa el `thumbnail` que manda Telegram.
+- Los emojis unicode normales se descargan de GitHub (twemoji) la
+  primera vez que aparecen y se cachean en memoria; el servidor
+  necesita salida a internet hacia raw.githubusercontent.com. Si no la
+  tiene, cae de nuevo a dibujar el carácter con la fuente de texto.
 """
 from __future__ import annotations
 
+import asyncio
+import io
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Iterable, Optional
 
+import httpx
 from PIL import Image, ImageDraw
 from telegram import Bot, MessageEntity, PhotoSize
 from telegram.error import TelegramError
@@ -47,7 +57,6 @@ async def _download_image(bot: Bot, file_id: str) -> Optional[Image.Image]:
 
 
 def io_bytes(raw: bytearray):
-    import io
     return io.BytesIO(bytes(raw))
 
 
@@ -204,3 +213,83 @@ async def fetch_custom_emoji_images(bot: Bot, entities: list[MessageEntity]) -> 
         if img:
             result[sticker.custom_emoji_id] = img
     return result
+
+
+# --------------------------------------------------------------------- #
+# Emojis unicode normales — se descarga la imagen real (estilo Twemoji)
+# en vez de depender de que el servidor tenga una fuente de emoji a
+# color instalada. Esto es lo que evita que nombres/mensajes con emoji
+# se vean como "□□□" cuando el servidor no tiene esa fuente.
+#
+# Se cachean en memoria por el tiempo de vida del proceso (un emoji
+# siempre se ve igual, no hace falta volver a pedirlo).
+# --------------------------------------------------------------------- #
+_UNICODE_EMOJI_CACHE: dict[str, Optional[Image.Image]] = {}
+_VARIATION_SELECTORS = {0xFE0E, 0xFE0F}
+_TWEMOJI_URL_TEMPLATES = [
+    # jdecked/twemoji es el fork mantenido activamente (Twitter/twemoji
+    # quedó archivado); se prueba primero y se cae al original como respaldo.
+    "https://raw.githubusercontent.com/jdecked/twemoji/main/assets/72x72/{cp}.png",
+    "https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/{cp}.png",
+]
+
+_http_client_lock = asyncio.Lock()
+_http_client: Optional[httpx.AsyncClient] = None
+
+
+async def _get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    async with _http_client_lock:
+        if _http_client is None or _http_client.is_closed:
+            _http_client = httpx.AsyncClient(timeout=6.0)
+        return _http_client
+
+
+def _cluster_codepoints(cluster: str) -> str:
+    return "-".join(f"{ord(ch):x}" for ch in cluster if ord(ch) not in _VARIATION_SELECTORS)
+
+
+async def fetch_unicode_emoji_image(cluster: str) -> Optional[Image.Image]:
+    """Imagen (color) de un emoji unicode "normal" (no premium), identificado
+    por su cluster de texto exacto (p. ej. "🐺" o "👨‍👩‍👧"). None si no se
+    pudo descargar — en ese caso quote_sticker.py cae de nuevo a dibujar el
+    carácter con la fuente de texto (puede verse como "tofu" si el servidor
+    no tiene una fuente de emoji instalada)."""
+    if cluster in _UNICODE_EMOJI_CACHE:
+        return _UNICODE_EMOJI_CACHE[cluster]
+
+    codepoints = _cluster_codepoints(cluster)
+    if not codepoints:
+        _UNICODE_EMOJI_CACHE[cluster] = None
+        return None
+
+    img: Optional[Image.Image] = None
+    try:
+        client = await _get_http_client()
+        for template in _TWEMOJI_URL_TEMPLATES:
+            url = template.format(cp=codepoints)
+            try:
+                resp = await client.get(url, follow_redirects=True)
+                if resp.status_code == 200 and resp.content:
+                    candidate = Image.open(io.BytesIO(resp.content))
+                    candidate.load()
+                    img = candidate.convert("RGBA")
+                    break
+            except (httpx.HTTPError, OSError):
+                continue
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("No pude descargar el emoji %s (%s): %s", cluster, codepoints, exc)
+
+    _UNICODE_EMOJI_CACHE[cluster] = img
+    return img
+
+
+async def fetch_unicode_emoji_images(clusters: Iterable[str]) -> dict[str, Optional[Image.Image]]:
+    """Descarga (en paralelo) las imágenes de todos los clusters de emoji
+    únicos en `clusters`, usando la caché en memoria cuando ya se pidieron
+    antes. Devuelve {cluster: imagen_o_None}."""
+    unique = list(dict.fromkeys(clusters))
+    pending = [c for c in unique if c not in _UNICODE_EMOJI_CACHE]
+    if pending:
+        await asyncio.gather(*(fetch_unicode_emoji_image(c) for c in pending))
+    return {c: _UNICODE_EMOJI_CACHE.get(c) for c in unique}
