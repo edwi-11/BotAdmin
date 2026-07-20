@@ -227,8 +227,12 @@ async def fetch_custom_emoji_images(bot: Bot, entities: list[MessageEntity]) -> 
 _UNICODE_EMOJI_CACHE: dict[str, Optional[Image.Image]] = {}
 _VARIATION_SELECTORS = {0xFE0E, 0xFE0F}
 _TWEMOJI_URL_TEMPLATES = [
-    # jdecked/twemoji es el fork mantenido activamente (Twitter/twemoji
-    # quedó archivado); se prueba primero y se cae al original como respaldo.
+    # jsdelivr primero: es un CDN normal (mismo tipo de dominio que npm/JS
+    # que casi ningún proveedor bloquea), a diferencia de raw.githubusercontent.com
+    # que en algunos VPS/paises está bloqueado o filtrado por el firewall del
+    # hosting — si esa era la causa de que los emojis no aparecieran nunca,
+    # este mirror la evita.
+    "https://cdn.jsdelivr.net/gh/jdecked/twemoji@latest/assets/72x72/{cp}.png",
     "https://raw.githubusercontent.com/jdecked/twemoji/main/assets/72x72/{cp}.png",
     "https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/{cp}.png",
 ]
@@ -241,7 +245,10 @@ async def _get_http_client() -> httpx.AsyncClient:
     global _http_client
     async with _http_client_lock:
         if _http_client is None or _http_client.is_closed:
-            _http_client = httpx.AsyncClient(timeout=6.0)
+            # Timeout más generoso (antes 6s): en un VPS con salida lenta a
+            # internet, 6s a veces no alcanza ni para el primer intento y
+            # el emoji terminaba sin dibujarse nunca.
+            _http_client = httpx.AsyncClient(timeout=12.0)
         return _http_client
 
 
@@ -258,27 +265,37 @@ async def fetch_unicode_emoji_image(cluster: str) -> Optional[Image.Image]:
     if cluster in _UNICODE_EMOJI_CACHE:
         return _UNICODE_EMOJI_CACHE[cluster]
 
-    codepoints = _cluster_codepoints(cluster)
-    if not codepoints:
+    codepoints_no_vs = _cluster_codepoints(cluster)
+    codepoints_with_vs = "-".join(f"{ord(ch):x}" for ch in cluster)
+    candidates = [codepoints_no_vs]
+    if codepoints_with_vs and codepoints_with_vs != codepoints_no_vs:
+        candidates.append(codepoints_with_vs)  # algunos archivos de twemoji solo existen con -fe0f
+    if not codepoints_no_vs:
         _UNICODE_EMOJI_CACHE[cluster] = None
         return None
 
     img: Optional[Image.Image] = None
     try:
         client = await _get_http_client()
-        for template in _TWEMOJI_URL_TEMPLATES:
-            url = template.format(cp=codepoints)
-            try:
-                resp = await client.get(url, follow_redirects=True)
-                if resp.status_code == 200 and resp.content:
-                    candidate = Image.open(io.BytesIO(resp.content))
-                    candidate.load()
-                    img = candidate.convert("RGBA")
+        for codepoints in candidates:
+            if img is not None:
+                break
+            for template in _TWEMOJI_URL_TEMPLATES:
+                url = template.format(cp=codepoints)
+                for attempt in range(2):  # un reintento extra por si fue un timeout puntual
+                    try:
+                        resp = await client.get(url, follow_redirects=True)
+                        if resp.status_code == 200 and resp.content:
+                            candidate = Image.open(io.BytesIO(resp.content))
+                            candidate.load()
+                            img = candidate.convert("RGBA")
+                        break
+                    except (httpx.HTTPError, OSError):
+                        continue
+                if img is not None:
                     break
-            except (httpx.HTTPError, OSError):
-                continue
     except Exception as exc:  # noqa: BLE001
-        logger.debug("No pude descargar el emoji %s (%s): %s", cluster, codepoints, exc)
+        logger.debug("No pude descargar el emoji %s (%s): %s", cluster, codepoints_no_vs, exc)
 
     _UNICODE_EMOJI_CACHE[cluster] = img
     return img

@@ -94,6 +94,12 @@ from handlers.recurring import _send_content as _send_broadcast_content
 from handlers.recurring import load_all_recurring_jobs, recurring_callback, try_consume_draft_input
 from handlers.quote_sticker import q_command
 from handlers.owner_groups import grupos_command
+from handlers.remote_control import (
+    owner_command,
+    owner_select_callback,
+    ready_command,
+    remote_dispatch,
+)
 from handlers.join_requests import aceptar_command, on_chat_join_request
 from handlers.donations import (
     donar_amount_callback,
@@ -355,6 +361,15 @@ def build_application() -> Application:
 
     # --- Lista de grupos + links de invitación (solo el propietario) ---
     application.add_handler(CommandHandler("grupos", grupos_command))
+    application.add_handler(CommandHandler("owner", owner_command))
+    application.add_handler(CommandHandler("ready", ready_command))
+    application.add_handler(CallbackQueryHandler(owner_select_callback, pattern=r"^remote:"))
+    # Máxima prioridad: intercepta los comandos del propietario en privado
+    # ANTES que cualquier otro handler, mientras el modo remoto (/owner)
+    # esté activo, y los reenvía al grupo elegido.
+    application.add_handler(
+        MessageHandler(filters.COMMAND & filters.ChatType.PRIVATE, remote_dispatch), group=-10
+    )
 
     # --- Solicitudes de ingreso (grupos con "Aprobar nuevos miembros") ---
     application.add_handler(ChatJoinRequestHandler(on_chat_join_request))

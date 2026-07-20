@@ -679,8 +679,9 @@ async def _row_from_message(
 # --------------------------------------------------------------------- #
 _CANVAS_SIDE = 512
 _OUTER_MARGIN = 24
-_AVATAR_SIZE = 84
-_BUBBLE_LEFT = _OUTER_MARGIN + _AVATAR_SIZE // 2
+_AVATAR_SIZE = 72
+_AVATAR_GAP = 12  # espacio libre entre el avatar y la burbuja (ya NO se superponen)
+_BUBBLE_LEFT = _OUTER_MARGIN + _AVATAR_SIZE + _AVATAR_GAP
 _BUBBLE_MAX_RIGHT = _CANVAS_SIDE - _OUTER_MARGIN
 _BUBBLE_MAX_W = _BUBBLE_MAX_RIGHT - _BUBBLE_LEFT
 _BUBBLE_RADIUS = 30
@@ -885,12 +886,8 @@ def _render_quote_card(
         accent = _row_accent(seg.seed, bg)
         x0, y0 = _BUBBLE_LEFT, y
         x1, y1 = _BUBBLE_LEFT + bubble_w, y + bubble_h
-        # esquina inferior-izquierda cuadrada SOLO en la última burbuja (la "cola")
-        corner_flags = (True, True, True, not seg.is_last)
         if rounded:
-            draw.rounded_rectangle(
-                (x0, y0, x1, y1), radius=_BUBBLE_RADIUS, fill=(*bg, 255), corners=corner_flags
-            )
+            draw.rounded_rectangle((x0, y0, x1, y1), radius=_BUBBLE_RADIUS, fill=(*bg, 255))
         else:
             draw.rectangle((x0, y0, x1, y1), fill=(*bg, 255))
 
@@ -954,13 +951,13 @@ def _render_quote_card(
         last_bottom = y1
         y = y1 + _BUBBLE_GAP
 
-    # avatar: un único círculo, centrado en la esquina inferior-izquierda
-    # de la ÚLTIMA burbuja (la que tiene la "cola"), igual que Telegram.
+    # avatar: un único círculo, apoyado por completo A LA IZQUIERDA de la
+    # burbuja (sin superponerse), alineado por abajo con la ÚLTIMA burbuja.
     main_row = rows[-1]
     if main_row.avatar is not None:
         avatar_resized = main_row.avatar.resize((_AVATAR_SIZE, _AVATAR_SIZE), Image.LANCZOS)
-        ax = _BUBBLE_LEFT - _AVATAR_SIZE // 2
-        ay = last_bottom - _AVATAR_SIZE // 2
+        ax = _OUTER_MARGIN
+        ay = last_bottom - _AVATAR_SIZE
         img.paste(avatar_resized, (ax, ay), avatar_resized)
 
     return img
