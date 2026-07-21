@@ -66,7 +66,7 @@ def _new_draft() -> dict:
     return {
         "content_type": "text", "text": None, "entities_json": "[]",
         "file_id": None, "buttons_json": "[]", "awaiting": None,
-        "menu_chat_id": None, "menu_message_id": None,
+        "menu_chat_id": None, "menu_message_id": None, "send_target": "groups",
     }
 
 
@@ -126,8 +126,9 @@ def _draft_view(draft: dict) -> tuple[str, InlineKeyboardMarkup]:
     text = "\n".join([
         "📢 *Compositor de anuncio*",
         "",
-        "Este mensaje se enviará a *todos los grupos* donde esté el bot de "
-        "moderación\\. Revisa bien antes de enviarlo\\.",
+        "Este mensaje se puede enviar a *todos los grupos* donde esté el bot de "
+        "moderación, o por privado a *los usuarios* que ya iniciaron chat con él "
+        "\\(elige abajo\\)\\. Revisa bien antes de enviarlo\\.",
         "",
         f"📷 Multimedia: *{escape_md(media_status)}*",
         f"📝 Texto: *{escape_md(text_status)}*",
@@ -138,7 +139,8 @@ def _draft_view(draft: dict) -> tuple[str, InlineKeyboardMarkup]:
         [InlineKeyboardButton(f"📝 Texto: {text_status}", callback_data="b:text")],
         [InlineKeyboardButton("🔘 Botones", callback_data="b:buttons")],
         [InlineKeyboardButton("👁 Vista previa", callback_data="b:preview")],
-        [InlineKeyboardButton("📢 Enviar a todos los grupos", callback_data="b:sendask")],
+        [InlineKeyboardButton("📢 Enviar a todos los grupos", callback_data="b:sendask:groups")],
+        [InlineKeyboardButton("👥 Enviar a los usuarios", callback_data="b:sendask:users")],
         [InlineKeyboardButton("❌ Descartar", callback_data="b:cancel")],
     ]
     return text, InlineKeyboardMarkup(rows)
@@ -190,7 +192,8 @@ async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.answer("El editor expiró, usa /anuncio de nuevo.", show_alert=True)
         return
 
-    action = (query.data or "").split(":", 1)[1]
+    action_raw = (query.data or "").split(":", 1)[1]
+    action, _, action_arg = action_raw.partition(":")
     db = _get_db(context)
 
     if action == "back":
@@ -247,20 +250,27 @@ async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if not has_content:
             await query.answer("Primero define un texto o una foto/video.", show_alert=True)
             return
-        groups = await db.get_known_groups()
+        target = action_arg if action_arg in ("groups", "users") else "groups"
+        draft["send_target"] = target
+        if target == "users":
+            count = await db.count_dm_ok_users()
+            target_desc = f"*{count}* usuario\\(s\\) \\(solo los que ya iniciaron chat con el bot de moderación\\)"
+        else:
+            groups = await db.get_known_groups()
+            target_desc = f"*{len(groups)}* grupo\\(s\\)"
         confirm = InlineKeyboardMarkup([[
             InlineKeyboardButton("✅ Sí, enviar", callback_data="b:senddo"),
             InlineKeyboardButton("❌ Cancelar", callback_data="b:back"),
         ]])
         await query.edit_message_text(
-            f"⚠️ Vas a enviar este anuncio a *{len(groups)}* grupo\\(s\\)\\. "
-            "¿Confirmas?",
+            f"⚠️ Vas a enviar este anuncio a {target_desc}\\. ¿Confirmas?",
             parse_mode=ParseMode.MARKDOWN_V2, reply_markup=confirm,
         )
         await query.answer()
         return
 
     if action == "senddo":
+        target = draft.get("send_target", "groups")
         file_ref = draft.get("file_id")
         if draft["content_type"] != "text" and file_ref:
             try:
@@ -274,14 +284,12 @@ async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         broadcast_id = await db.create_broadcast(
             content_type=draft["content_type"], text=draft.get("text"),
             entities=draft["entities_json"], file_id=file_ref,
-            buttons=draft["buttons_json"], created_by=user.id,
+            buttons=draft["buttons_json"], created_by=user.id, target=target,
         )
         context.user_data.pop("broadcast_draft", None)
+        destino = "a los usuarios que ya iniciaron chat con el bot" if target == "users" else "a todos los grupos"
         await query.edit_message_text(
-            success(
-                f"Anuncio #{broadcast_id} en cola. El bot de moderación lo enviará a todos "
-                "los grupos en los próximos segundos."
-            )
+            success(f"Anuncio #{broadcast_id} en cola. El bot de moderación lo enviará {destino} en los próximos segundos.")
         )
         await query.answer("¡Encolado!")
         return

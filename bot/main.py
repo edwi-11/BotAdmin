@@ -200,31 +200,41 @@ def _extract_sent_file_id(message, content_type: str) -> Optional[str]:
 
 async def _broadcast_dispatch_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Revisa la cola de anuncios (llenada por el bot anunciador, si lo usas)
-    y envía cada anuncio pendiente a todos los grupos conocidos."""
+    y envía cada anuncio pendiente a todos los grupos conocidos, o por
+    privado a los usuarios que ya pueden recibir mensajes del bot, según
+    el destino que se haya elegido al crear el anuncio."""
     db: Database = context.application.bot_data["db"]
     pending = await db.get_pending_broadcasts()
     if not pending:
         return
 
     groups = await db.get_known_groups()
+    dm_users = await db.get_dm_ok_users()
+
     for broadcast in pending:
+        is_users = broadcast.target == "users"
+        recipients = [uid for uid, _name, _username in dm_users] if is_users else [gid for gid, _title in groups]
+        recipient_kind = "usuario(s)" if is_users else "grupo(s)"
+
         sent_count = 0
         failed_count = 0
         # El file_id puede venir marcado como archivo local en disco (lo
         # dejó ahí el bot anunciador, porque su file_id no sirve para este
-        # bot). Lo subimos una sola vez al primer grupo y, si funciona,
-        # reutilizamos el file_id resultante (ya válido para este bot) en
-        # el resto de los grupos en vez de volver a leer el disco.
+        # bot). Lo subimos una sola vez al primer destinatario y, si
+        # funciona, reutilizamos el file_id resultante (ya válido para
+        # este bot) en el resto en vez de volver a leer el disco.
         current_file_ref = broadcast.file_id
         is_local = bool(current_file_ref and current_file_ref.startswith(LOCAL_FILE_PREFIX))
 
-        for group_id, _title in groups:
+        for recipient_id in recipients:
             try:
                 sent = await _send_broadcast_content(
-                    context, group_id, broadcast.content_type, broadcast.text,
+                    context, recipient_id, broadcast.content_type, broadcast.text,
                     broadcast.entities, current_file_ref, broadcast.buttons,
                 )
                 sent_count += 1
+                if is_users:
+                    await db.set_dm_ok(recipient_id, True)
                 if is_local:
                     reused = _extract_sent_file_id(sent, broadcast.content_type)
                     if reused:
@@ -232,7 +242,14 @@ async def _broadcast_dispatch_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                         is_local = False
             except TelegramError as exc:
                 failed_count += 1
-                logger.warning("No se pudo enviar el anuncio #%s al grupo %s: %s", broadcast.id, group_id, exc)
+                if is_users:
+                    # Nos bloqueó o nunca nos escribió: dejamos de intentar
+                    # mandarle privados hasta que vuelva a hacer /start.
+                    await db.set_dm_ok(recipient_id, False)
+                logger.warning(
+                    "No se pudo enviar el anuncio #%s a %s %s: %s",
+                    broadcast.id, "usuario" if is_users else "grupo", recipient_id, exc,
+                )
             except FileNotFoundError as exc:
                 failed_count += 1
                 logger.warning("Anuncio #%s: %s", broadcast.id, exc)
@@ -249,8 +266,8 @@ async def _broadcast_dispatch_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         await db.mark_broadcast_sent(broadcast.id, sent_count, failed_count)
         logger.info(
-            "Anuncio #%s enviado: %d exitosos, %d fallidos de %d grupos.",
-            broadcast.id, sent_count, failed_count, len(groups),
+            "Anuncio #%s enviado: %d exitosos, %d fallidos de %d %s.",
+            broadcast.id, sent_count, failed_count, len(recipients), recipient_kind,
         )
 
 
@@ -302,6 +319,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """/start normal -> abre el menú. /start secedit_<id> (deep link usado
     por el botón "Editar mensaje" de un mensaje secreto) -> se desvía para
     pedir el texto nuevo en vez de mostrar el menú."""
+    if update.effective_chat.type == "private":
+        db: Database = context.application.bot_data["db"]
+        user = update.effective_user
+        await db.upsert_user(user.id, user.username, user.first_name)
+        await db.set_dm_ok(user.id, True)
     if await handle_secret_start_deeplink(update, context):
         return
     await menu_command(update, context)

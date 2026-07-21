@@ -126,9 +126,11 @@ def build_main_menu(group_id: int, is_private: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-def build_welcome_menu(group_id: int, enabled: bool, clean: bool) -> InlineKeyboardMarkup:
+def build_welcome_menu(group_id: int, enabled: bool, clean: bool, send_to: str = "group") -> InlineKeyboardMarkup:
+    send_to_label = {"group": "Grupo", "private": "Privado", "both": "Ambos"}.get(send_to, "Grupo")
     rows = [
         [InlineKeyboardButton(f"Estado: {_onoff(enabled)}", callback_data=f"m:wtoggle:{group_id}")],
+        [InlineKeyboardButton(f"📨 Enviar a: {send_to_label}", callback_data=f"m:wsendto:{group_id}")],
         [InlineKeyboardButton(f"🧹 Auto-limpiar anterior: {'Sí' if clean else 'No'}", callback_data=f"m:wclean:{group_id}")],
         [InlineKeyboardButton("✏️ Editar mensaje", callback_data=f"m:wedit:{group_id}")],
         [InlineKeyboardButton("♻️ Restablecer texto", callback_data=f"m:wreset:{group_id}")],
@@ -181,12 +183,17 @@ def _main_text(title: str) -> str:
 
 async def _welcome_text(db: Database, group_id: int) -> str:
     s = await db.get_group_settings(group_id)
+    send_to_label = {"group": "Grupo", "private": "Privado", "both": "Ambos"}.get(s.welcome_send_to, "Grupo")
     return (
         "👋 *Bienvenida*\n\n"
         f"Estado: {_onoff(s.welcome_enabled)}\n"
+        f"Enviar a: {escape_md(send_to_label)}\n"
         f"Auto\\-limpiar anterior: {'Sí' if s.clean_welcome else 'No'}\n\n"
         f"Mensaje actual:\n{escape_md(s.welcome_text)}\n\n"
-        "Marcadores disponibles: `{name}` `{mention}` `{username}` `{id}` `{group}`"
+        "Marcadores disponibles: `{name}` `{mention}` `{username}` `{id}` `{group}`\n\n"
+        "ℹ️ Si el envío es *Privado* o *Ambos*: si la persona nunca inició "
+        "un chat conmigo, Telegram no me deja escribirle primero — en ese "
+        "caso le aviso en el grupo con un botón para que inicie el chat\\."
     )
 
 
@@ -326,7 +333,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         s = await db.get_group_settings(group_id)
         await query.edit_message_text(
             await _welcome_text(db, group_id), parse_mode=ParseMode.MARKDOWN_V2,
-            reply_markup=build_welcome_menu(group_id, s.welcome_enabled, s.clean_welcome),
+            reply_markup=build_welcome_menu(group_id, s.welcome_enabled, s.clean_welcome, s.welcome_send_to),
         )
         await query.answer()
         return
@@ -337,7 +344,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         s = await db.get_group_settings(group_id)
         await query.edit_message_text(
             await _welcome_text(db, group_id), parse_mode=ParseMode.MARKDOWN_V2,
-            reply_markup=build_welcome_menu(group_id, s.welcome_enabled, s.clean_welcome),
+            reply_markup=build_welcome_menu(group_id, s.welcome_enabled, s.clean_welcome, s.welcome_send_to),
         )
         await query.answer()
         return
@@ -348,7 +355,19 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         s = await db.get_group_settings(group_id)
         await query.edit_message_text(
             await _welcome_text(db, group_id), parse_mode=ParseMode.MARKDOWN_V2,
-            reply_markup=build_welcome_menu(group_id, s.welcome_enabled, s.clean_welcome),
+            reply_markup=build_welcome_menu(group_id, s.welcome_enabled, s.clean_welcome, s.welcome_send_to),
+        )
+        await query.answer()
+        return
+
+    if action == "wsendto":
+        s = await db.get_group_settings(group_id)
+        next_value = {"group": "private", "private": "both", "both": "group"}.get(s.welcome_send_to, "group")
+        await db.set_group_setting(group_id, "welcome_send_to", next_value)
+        s = await db.get_group_settings(group_id)
+        await query.edit_message_text(
+            await _welcome_text(db, group_id), parse_mode=ParseMode.MARKDOWN_V2,
+            reply_markup=build_welcome_menu(group_id, s.welcome_enabled, s.clean_welcome, s.welcome_send_to),
         )
         await query.answer()
         return
@@ -358,7 +377,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         s = await db.get_group_settings(group_id)
         await query.edit_message_text(
             await _welcome_text(db, group_id), parse_mode=ParseMode.MARKDOWN_V2,
-            reply_markup=build_welcome_menu(group_id, s.welcome_enabled, s.clean_welcome),
+            reply_markup=build_welcome_menu(group_id, s.welcome_enabled, s.clean_welcome, s.welcome_send_to),
         )
         await query.answer("Restablecido.")
         return
@@ -528,7 +547,7 @@ async def try_consume_pending_input(update: Update, context: ContextTypes.DEFAUL
             await context.bot.edit_message_text(
                 chat_id=chat_id, message_id=message_id,
                 text=await _welcome_text(db, group_id), parse_mode=ParseMode.MARKDOWN_V2,
-                reply_markup=build_welcome_menu(group_id, s.welcome_enabled, s.clean_welcome),
+                reply_markup=build_welcome_menu(group_id, s.welcome_enabled, s.clean_welcome, s.welcome_send_to),
             )
         elif field == "goodbye_text":
             s = await db.get_group_settings(group_id)

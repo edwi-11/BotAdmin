@@ -217,11 +217,26 @@ _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("warn_limit", "INTEGER NOT NULL DEFAULT 3"),
         ("warn_action", "TEXT NOT NULL DEFAULT 'mute'"),
         ("warn_mute_seconds", "INTEGER NOT NULL DEFAULT 3600"),
+        # A dónde se manda el mensaje de bienvenida: 'group' | 'private' | 'both'.
+        ("welcome_send_to", "TEXT NOT NULL DEFAULT 'group'"),
     ],
     "known_groups": [
         # Grupo "activado" por el propietario mediante /activar. Mientras
         # esté en 0, el bot no responde a ningún comando en ese grupo.
         ("activated", "INTEGER NOT NULL DEFAULT 0"),
+    ],
+    "users": [
+        # 1 = le podemos mandar mensajes privados a este usuario (ya sea
+        # porque nos escribió /start, o porque una bienvenida/broadcast le
+        # llegó con éxito). Telegram prohíbe que un bot le escriba primero
+        # a alguien que nunca abrió un chat con él, así que esta bandera es
+        # la única forma confiable de saber a quién sí se le puede escribir.
+        ("dm_ok", "INTEGER NOT NULL DEFAULT 0"),
+    ],
+    "broadcast_queue": [
+        # A quién se manda el anuncio: 'groups' (todos los grupos, como
+        # antes) o 'users' (privado, solo a quien nos pueda escribir).
+        ("target", "TEXT NOT NULL DEFAULT 'groups'"),
     ],
 }
 
@@ -263,6 +278,7 @@ class GroupSettings:
     warn_limit: int = 3                 # cantidad de advertencias antes de castigar
     warn_action: str = "mute"           # mute | kick | ban
     warn_mute_seconds: int = 3600       # 0 = mute permanente (solo si warn_action == mute)
+    welcome_send_to: str = "group"      # group | private | both
 
 
 @dataclass(slots=True)
@@ -326,14 +342,17 @@ class BroadcastMessage:
     sent_at: Optional[int]
     sent_count: int
     failed_count: int
+    target: str = "groups"  # groups | users
 
 
 def _row_to_broadcast(row: aiosqlite.Row) -> BroadcastMessage:
+    keys = row.keys()
     return BroadcastMessage(
         id=row["id"], content_type=row["content_type"], text=row["text"],
         entities=row["entities"], file_id=row["file_id"], buttons=row["buttons"],
         status=row["status"], created_by=row["created_by"], created_at=row["created_at"],
         sent_at=row["sent_at"], sent_count=row["sent_count"], failed_count=row["failed_count"],
+        target=(row["target"] if "target" in keys and row["target"] else "groups"),
     )
 
 
@@ -436,6 +455,33 @@ class Database:
         )
         row = await cursor.fetchone()
         return int(row["user_id"]) if row else None
+
+    async def set_dm_ok(self, user_id: int, ok: bool) -> None:
+        """Marca si le podemos escribir por privado a este usuario o no.
+        Se pone en True cuando nos manda /start o cuando le llega bien un
+        mensaje privado (bienvenida, broadcast); se pone en False en cuanto
+        un envío falla porque nos bloqueó o nunca abrió chat con nosotros."""
+        await self.conn.execute(
+            """
+            INSERT INTO users (user_id, dm_ok, updated_at) VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET dm_ok = excluded.dm_ok, updated_at = excluded.updated_at
+            """,
+            (user_id, 1 if ok else 0, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def get_dm_ok_users(self) -> list[tuple[int, str, Optional[str]]]:
+        """Usuarios a los que sí se les puede escribir por privado: (user_id, first_name, username)."""
+        cursor = await self.conn.execute(
+            "SELECT user_id, first_name, username FROM users WHERE dm_ok = 1"
+        )
+        rows = await cursor.fetchall()
+        return [(row["user_id"], row["first_name"] or "", row["username"]) for row in rows]
+
+    async def count_dm_ok_users(self) -> int:
+        cursor = await self.conn.execute("SELECT COUNT(*) AS c FROM users WHERE dm_ok = 1")
+        row = await cursor.fetchone()
+        return int(row["c"]) if row else 0
 
     async def get_user_display_name(self, user_id: int) -> Optional[str]:
         cursor = await self.conn.execute(
@@ -572,7 +618,7 @@ class Database:
         "goodbye_text", "rules_text", "clean_welcome", "afk_enabled",
         "delete_join", "delete_leave", "delete_call", "delete_pin", "delete_commands",
         "filter_punishment", "filter_mute_seconds", "filter_delete",
-        "warn_limit", "warn_action", "warn_mute_seconds",
+        "warn_limit", "warn_action", "warn_mute_seconds", "welcome_send_to",
     }
 
     async def get_group_settings(self, group_id: int) -> GroupSettings:
@@ -603,6 +649,7 @@ class Database:
             warn_limit=(row["warn_limit"] if "warn_limit" in keys and row["warn_limit"] is not None else 3),
             warn_action=(row["warn_action"] if "warn_action" in keys and row["warn_action"] else "mute"),
             warn_mute_seconds=(row["warn_mute_seconds"] if "warn_mute_seconds" in keys and row["warn_mute_seconds"] is not None else 3600),
+            welcome_send_to=(row["welcome_send_to"] if "welcome_send_to" in keys and row["welcome_send_to"] else "group"),
         )
 
     async def set_group_setting(self, group_id: int, column: str, value) -> None:
@@ -1048,15 +1095,15 @@ class Database:
     # ------------------------------------------------------------------ #
     async def create_broadcast(
         self, content_type: str, text: Optional[str], entities: str,
-        file_id: Optional[str], buttons: str, created_by: int,
+        file_id: Optional[str], buttons: str, created_by: int, target: str = "groups",
     ) -> int:
         cursor = await self.conn.execute(
             """
             INSERT INTO broadcast_queue
-                (content_type, text, entities, file_id, buttons, status, created_by, created_at)
-            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+                (content_type, text, entities, file_id, buttons, status, created_by, created_at, target)
+            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
             """,
-            (content_type, text, entities, file_id, buttons, created_by, int(time.time())),
+            (content_type, text, entities, file_id, buttons, created_by, int(time.time()), target),
         )
         await self.conn.commit()
         return cursor.lastrowid
