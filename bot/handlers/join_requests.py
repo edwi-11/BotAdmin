@@ -9,6 +9,12 @@ update `chat_join_request`, a medida que la gente las manda. Por eso las
 vamos guardando en la base de datos apenas llegan (`on_chat_join_request`),
 y `/aceptar` las aprueba desde ahí.
 
+Si la bienvenida del grupo está configurada como "Privado" o "Ambos"
+(ver menú de Bienvenida), `on_chat_join_request` también le manda ese
+mensaje a la persona apenas manda la solicitud —no cuando ya entró—,
+aprovechando la ventana de unos minutos que da Telegram para escribirle a
+alguien con una solicitud pendiente.
+
 Uso (dentro del grupo, solo administradores):
     /aceptar all      -> aprueba TODAS las solicitudes pendientes
     /aceptar 100      -> aprueba las 100 más antiguas
@@ -25,12 +31,12 @@ import asyncio
 import logging
 
 from telegram import Update
-from telegram.constants import ChatMemberStatus
+from telegram.constants import ChatMemberStatus, ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from database import Database
-from utils.formatting import error
+from utils.formatting import error, render_template
 from utils.permissions import check_executor_is_admin
 
 logger = logging.getLogger(__name__)
@@ -43,7 +49,13 @@ _PROGRESS_EVERY = 100
 
 async def on_chat_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Se dispara cada vez que alguien manda una solicitud de ingreso a un
-    grupo donde está el bot. Solo la guarda; NO la aprueba automáticamente."""
+    grupo donde está el bot. La guarda (para /aceptar) y, si la bienvenida
+    del grupo está configurada como "Privado" o "Ambos", se la manda AHORA
+    —apenas pide entrar, no cuando ya esté adentro— aprovechando que
+    Telegram deja que el bot le escriba por privado a alguien con una
+    solicitud pendiente durante los primeros minutos, aunque nunca haya
+    hablado con el bot. Pasado ese lapso (o si la aprueba/rechaza un admin
+    antes), esa ventana se cierra y ya no se le puede volver a escribir así."""
     request = update.chat_join_request
     if request is None:
         return
@@ -51,6 +63,28 @@ async def on_chat_join_request(update: Update, context: ContextTypes.DEFAULT_TYP
     user = request.from_user
     name = user.first_name or user.username or "Usuario"
     await db.record_join_request(request.chat.id, user.id, name, user.username)
+
+    settings = await db.get_group_settings(request.chat.id)
+    if not settings.welcome_enabled or settings.welcome_send_to == "group":
+        # Sin bienvenida privada configurada: el saludo (si corresponde) se
+        # manda al grupo recién cuando la solicitud se apruebe y la persona
+        # entre de verdad (on_new_members la sigue cubriendo).
+        return
+
+    text = render_template(
+        settings.welcome_text, user_id=user.id, first_name=user.first_name,
+        username=user.username, group_title=request.chat.title,
+    )
+    try:
+        await context.bot.send_message(request.user_chat_id, text, parse_mode=ParseMode.HTML)
+        await db.upsert_user(user.id, user.username, user.first_name)
+        await db.set_dm_ok(user.id, True)
+        await db.mark_join_request_welcomed(request.chat.id, user.id)
+    except TelegramError as exc:
+        logger.info(
+            "No pude mandar la bienvenida privada al pedir ingreso (%s en %s): %s",
+            user.id, request.chat.id, exc,
+        )
 
 
 async def aceptar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

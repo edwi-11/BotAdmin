@@ -238,6 +238,11 @@ _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         # antes) o 'users' (privado, solo a quien nos pueda escribir).
         ("target", "TEXT NOT NULL DEFAULT 'groups'"),
     ],
+    "join_requests": [
+        # 1 = ya le mandamos la bienvenida privada apenas mandó la
+        # solicitud (para no repetírsela cuando entra de verdad).
+        ("welcomed", "INTEGER NOT NULL DEFAULT 0"),
+    ],
 }
 
 
@@ -1238,6 +1243,21 @@ class Database:
             (chat_id, user_id, name, username, int(time.time())),
         )
         await self.conn.commit()
+
+    async def mark_join_request_welcomed(self, chat_id: int, user_id: int) -> None:
+        await self.conn.execute(
+            "UPDATE join_requests SET welcomed = 1 WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def was_join_request_welcomed(self, chat_id: int, user_id: int) -> bool:
+        cursor = await self.conn.execute(
+            "SELECT welcomed FROM join_requests WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id),
+        )
+        row = await cursor.fetchone()
+        return bool(row["welcomed"]) if row else False
 
     async def count_pending_join_requests(self, chat_id: int) -> int:
         cursor = await self.conn.execute(

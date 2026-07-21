@@ -308,6 +308,9 @@ async def on_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 logger.warning("No se pudo enviar mensaje de bienvenida en %s: %s", chat.id, exc)
 
         if need_private:
+            already_welcomed = await db.was_join_request_welcomed(chat.id, new_user.id)
+            if already_welcomed:
+                continue  # ya le llegó por privado apenas mandó la solicitud de ingreso
             try:
                 await context.bot.send_message(new_user.id, text, parse_mode=ParseMode.HTML)
                 await db.set_dm_ok(new_user.id, True)
