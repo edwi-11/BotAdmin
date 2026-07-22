@@ -14,7 +14,7 @@ from telegram.ext import ContextTypes
 from config import settings
 from database import Database
 from utils.formatting import error, escape_md, mention, success
-from utils.parsing import resolve_target
+from utils.parsing import ResolvedTarget, resolve_target
 from utils.permissions import can_grant_admin, check_bot_rights, is_owner
 
 logger = logging.getLogger(__name__)
@@ -61,8 +61,19 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     resolved = await resolve_target(update, db, context.args)
     if isinstance(resolved, str):
-        await _reply(update, error(resolved))
-        return
+        # No indicó a quién (ni respondiendo un mensaje, ni con @usuario/ID):
+        # por defecto "/admin" a secas se refiere a quien envía el comando,
+        # para que el propietario pueda auto-otorgarse admin sin fricción.
+        if not update.effective_message.reply_to_message and not context.args:
+            resolved = ResolvedTarget(
+                user_id=executor.id,
+                display_name=executor.first_name,
+                username=executor.username,
+                remaining_args=[],
+            )
+        else:
+            await _reply(update, error(resolved))
+            return
 
     perm = await can_grant_admin(context.bot, chat.id, executor.id, resolved.user_id)
     if not perm.allowed:
@@ -109,6 +120,7 @@ async def unadmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await _reply(update, error(perm.reason))
         return
 
+    used_fallback = False
     try:
         await context.bot.promote_chat_member(
             chat.id, resolved.user_id,
@@ -117,8 +129,25 @@ async def unadmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             can_invite_users=False, can_pin_messages=False,
         )
     except TelegramError as exc:
-        await _reply(update, error(f"No pude revocar al usuario: {escape_md(str(exc))}"))
-        return
+        # Telegram no deja que un bot le quite privilegios de admin a alguien
+        # que no fue ascendido por él (o por otro admin nombrado por él): esa
+        # regla la impone Telegram según quién ascendió a quién, no algo que
+        # el bot decida. Esto pasa típicamente cuando el usuario fue hecho
+        # admin por otro admin humano o por otro bot. Como alternativa,
+        # intentamos expulsarlo y readmitirlo: al salir del grupo pierde el
+        # cargo de admin automáticamente, sin importar quién lo puso.
+        try:
+            await context.bot.ban_chat_member(chat.id, resolved.user_id)
+            await context.bot.unban_chat_member(chat.id, resolved.user_id, only_if_banned=True)
+            used_fallback = True
+        except TelegramError:
+            await _reply(update, error(
+                f"Telegram no me deja quitarle la administración a este usuario porque no se la "
+                f"otorgué yo \\(se la dio otro admin o otro bot\\), y tampoco pude expulsarlo como "
+                f"alternativa: {escape_md(str(exc))}\\. Solo el propietario del grupo puede "
+                f"quitársela directamente desde la app de Telegram\\."
+            ))
+            return
 
     await db.remove_bot_admin(chat.id, resolved.user_id)
     await db.add_log("unadmin", executor.id, executor.first_name, resolved.user_id,
@@ -129,6 +158,8 @@ async def unadmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         f"👤 Usuario: {mention(resolved.user_id, resolved.display_name)}\n"
         f"🛡 Revocado por: {mention(executor.id, executor.first_name)}"
     )
+    if used_fallback:
+        text += "\n_\\(no lo había ascendido yo, así que tuve que expulsarlo y readmitirlo para quitarle el cargo\\)_"
     await _reply(update, text)
 
 

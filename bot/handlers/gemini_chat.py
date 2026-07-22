@@ -65,22 +65,49 @@ _GEMINI_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/
 _GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 _SYSTEM_PROMPT = (
-    "Eres 'CEO', un integrante más de un grupo de Telegram, no un asistente formal. "
-    "Escribes en español neutro/latino, con personalidad y sentido del humor.\n\n"
-    "Adapta el tono según lo que te pregunten:\n"
-    "- Para saludos, comentarios casuales, bromas, o preguntas simples/random: responde "
-    "relajado, bromeando, con humor y emojis, como lo haría un amigo gracioso del grupo. "
-    "Sé breve, 1-4 frases.\n"
+    "Eres un integrante más de un grupo de Telegram, no un asistente corporativo ni "
+    "formal. Escribes en español neutro/latino, tal como hablaría cualquier persona "
+    "del grupo, no como un ejecutivo ni con lenguaje de oficina.\n\n"
+    "Se te muestra el historial reciente de la conversación con esta persona (si lo "
+    "hay) antes del mensaje nuevo. Úsalo para seguir el hilo: si la pregunta se conecta "
+    "con algo dicho antes, respóndela con ese contexto en mente en vez de repetirte o "
+    "ignorar lo anterior, como haría cualquiera siguiendo una charla.\n\n"
+    "Sobre el tono: fíjate en cómo habla la gente en ese chat (formal, relajado, con "
+    "groserías leves, sarcástico, con modismos locales, etc.) y responde en ese mismo "
+    "registro, no con un tono propio fijo. Evita los emojis salvo que aporten algo "
+    "puntual; nunca los uses en cada frase ni como muletilla.\n\n"
+    "Adapta la extensión según lo que te pregunten:\n"
+    "- Para saludos, comentarios casuales, bromas o preguntas simples/random: responde "
+    "breve y natural, 1-4 frases, sin sonar impostado.\n"
     "- Para preguntas específicas, técnicas, que pidan un dato concreto, una explicación, "
     "instrucciones, o algo que requiera precisión (cálculos, definiciones, cómo hacer algo, "
-    "hechos, tutoriales, etc.): deja el chiste a un lado y responde como el propio Gemini lo "
-    "haría normalmente — clara, completa y bien explicada, con el nivel de detalle que la "
-    "pregunta necesite (puede ser más larga si hace falta, con pasos o puntos si ayuda a "
-    "entender mejor). Puedes mantener algún emoji suelto, pero sin sacrificar precisión "
-    "por el tono.\n\n"
-    "No expliques que eres una IA ni que estás 'cambiando de modo'; simplemente responde "
-    "cada mensaje con el tono que le corresponda."
+    "hechos, tutoriales, etc.): responde clara, completa y bien explicada, con el nivel de "
+    "detalle que la pregunta necesite (puede ser más larga si hace falta, con pasos o "
+    "puntos si ayuda a entender mejor), sin sacrificar precisión por el tono.\n\n"
+    "No expliques que eres una IA, que estás 'siguiendo el hilo' o que estás adaptando "
+    "el tono; simplemente responde cada mensaje como corresponda."
 )
+
+# Historial de conversación en memoria, por (chat_id, user_id), para que el
+# bot pueda seguir el hilo si la misma persona le vuelve a escribir. Se
+# guardan como máximo las últimas _MAX_HISTORY_TURNS interacciones (par
+# pregunta/respuesta) por conversación, para no disparar el consumo de
+# tokens ni arrastrar contexto viejo indefinidamente.
+_MAX_HISTORY_TURNS = 8
+_conversation_history: dict[tuple[int, int], list[dict[str, str]]] = {}
+
+
+def _get_history(chat_id: int, user_id: int) -> list[dict[str, str]]:
+    return _conversation_history.setdefault((chat_id, user_id), [])
+
+
+def _push_history(chat_id: int, user_id: int, question: str, answer: str) -> None:
+    history = _get_history(chat_id, user_id)
+    history.append({"role": "user", "text": question})
+    history.append({"role": "model", "text": answer})
+    excess = len(history) - _MAX_HISTORY_TURNS * 2
+    if excess > 0:
+        del history[:excess]
 
 
 class GeminiError(Exception):
@@ -90,10 +117,16 @@ class GeminiError(Exception):
 # --------------------------------------------------------------------- #
 # Texto (chat normal)
 # --------------------------------------------------------------------- #
-async def _ask_gemini(prompt: str) -> str:
+async def _ask_gemini(prompt: str, history: list[dict[str, str]] | None = None) -> str:
+    contents = [
+        {"role": turn["role"], "parts": [{"text": turn["text"]}]}
+        for turn in (history or [])
+    ]
+    contents.append({"role": "user", "parts": [{"text": prompt}]})
+
     payload = {
         "system_instruction": {"parts": [{"text": _SYSTEM_PROMPT}]},
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "contents": contents,
         "generationConfig": {"temperature": 0.9, "maxOutputTokens": 1000},
     }
     url = _GEMINI_URL_TEMPLATE.format(model=settings.gemini_model)
@@ -116,18 +149,21 @@ async def _ask_gemini(prompt: str) -> str:
         raise GeminiError("Respuesta vacía o bloqueada por Gemini") from exc
 
 
-async def _ask_groq(prompt: str) -> str:
+async def _ask_groq(prompt: str, history: list[dict[str, str]] | None = None) -> str:
     """Respaldo gratuito (sin tarjeta) cuando Gemini falla o se quedó sin
     cuota. Usa la API de Groq, compatible con el formato de OpenAI."""
     if not settings.groq_api_key:
         raise GeminiError("Groq no está configurado (falta GROQ_API_KEY en el .env)")
 
+    messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
+    for turn in (history or []):
+        role = "assistant" if turn["role"] == "model" else "user"
+        messages.append({"role": role, "content": turn["text"]})
+    messages.append({"role": "user", "content": prompt})
+
     payload = {
         "model": settings.groq_model,
-        "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
+        "messages": messages,
         "temperature": 0.9,
         "max_tokens": 1000,
     }
@@ -148,23 +184,23 @@ async def _ask_groq(prompt: str) -> str:
         raise GeminiError("Respuesta vacía o bloqueada por Groq") from exc
 
 
-async def _ask_ai(prompt: str) -> str:
+async def _ask_ai(prompt: str, history: list[dict[str, str]] | None = None) -> str:
     """Intenta responder con Gemini primero. Si falla por CUALQUIER motivo
     (cuota agotada, error de red, respuesta bloqueada, etc.), o si Gemini
     ni siquiera está configurado, y hay una GROQ_API_KEY configurada,
     reintenta automáticamente con Groq antes de rendirse. Así el bot casi
     nunca se queda "mudo" por falta de cuota."""
     if not settings.gemini_api_key:
-        return await _ask_groq(prompt)
+        return await _ask_groq(prompt, history)
 
     try:
-        return await _ask_gemini(prompt)
+        return await _ask_gemini(prompt, history)
     except Exception as gemini_exc:  # noqa: BLE001
         if not settings.groq_api_key:
             raise
         logger.info("Gemini falló (%s), usando respaldo Groq...", gemini_exc)
         try:
-            return await _ask_groq(prompt)
+            return await _ask_groq(prompt, history)
         except Exception as groq_exc:  # noqa: BLE001
             logger.warning("El respaldo de Groq también falló: %s", groq_exc)
             raise groq_exc from gemini_exc
@@ -297,6 +333,8 @@ async def ceo_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     # Chat normal de texto
     question = remainder or "Salúdame brevemente y pregúntame en qué puedes ayudar."
+    user_id = update.effective_user.id if update.effective_user else 0
+    history = _get_history(chat.id, user_id)
 
     try:
         await context.bot.send_chat_action(chat.id, ChatAction.TYPING)
@@ -304,10 +342,11 @@ async def ceo_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         pass
 
     try:
-        answer = await _ask_ai(question)
+        answer = await _ask_ai(question, history)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Error consultando la IA (Gemini + Groq): %s", exc)
         await message.reply_text("😅 Se me trabó la cabeza justo ahora, intenta de nuevo en un ratito.")
         return
 
+    _push_history(chat.id, user_id, question, answer)
     await message.reply_text(answer)
