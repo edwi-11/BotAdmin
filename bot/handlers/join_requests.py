@@ -36,6 +36,7 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from database import Database
+from handlers.xmod import apply_extreme_punishment, check_extreme_moderation
 from utils.formatting import error, render_template
 from utils.permissions import check_executor_is_admin
 
@@ -153,14 +154,23 @@ async def aceptar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     approved_ids: list[int] = []
     failed_ids: list[int] = []
+    punished_ids: list[int] = []
 
-    for i, (uid, _name, _username) in enumerate(requests, start=1):
-        try:
-            await context.bot.approve_chat_join_request(chat.id, uid)
-            approved_ids.append(uid)
-        except TelegramError as exc:
-            logger.info("No se pudo aprobar la solicitud de %s en %s: %s", uid, chat.id, exc)
-            failed_ids.append(uid)
+    for i, (uid, name, username) in enumerate(requests, start=1):
+        # Moderación extrema (si está activada en este grupo): revisa
+        # nombre/usuario/bio/foto ANTES de aprobar. Si algo coincide, se
+        # aplica el castigo configurado en vez de dejarlo entrar.
+        reason = await check_extreme_moderation(context.bot, db, chat.id, uid, name, username)
+        if reason:
+            await apply_extreme_punishment(context.bot, db, chat.id, chat.title, uid, name, reason)
+            punished_ids.append(uid)
+        else:
+            try:
+                await context.bot.approve_chat_join_request(chat.id, uid)
+                approved_ids.append(uid)
+            except TelegramError as exc:
+                logger.info("No se pudo aprobar la solicitud de %s en %s: %s", uid, chat.id, exc)
+                failed_ids.append(uid)
 
         if i % _PROGRESS_EVERY == 0 and i != total:
             try:
@@ -174,9 +184,13 @@ async def aceptar_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await db.set_join_requests_status_bulk(chat.id, approved_ids, "approved")
     if failed_ids:
         await db.set_join_requests_status_bulk(chat.id, failed_ids, "failed")
+    if punished_ids:
+        await db.set_join_requests_status_bulk(chat.id, punished_ids, "rejected")
 
     remaining = await db.count_pending_join_requests(chat.id)
     summary = f"✅ {len(approved_ids)} solicitud(es) aprobada(s)."
+    if punished_ids:
+        summary += f"\n🛡 {len(punished_ids)} solicitud(es) sancionada(s) por moderación extrema."
     if failed_ids:
         summary += f"\n⚠️ {len(failed_ids)} ya no eran válidas (el usuario canceló o ya no está)."
     summary += f"\nQuedan {remaining} pendiente(s) registrada(s)."

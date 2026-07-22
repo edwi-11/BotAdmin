@@ -99,6 +99,19 @@ CREATE TABLE IF NOT EXISTS banned_words (
     PRIMARY KEY (group_id, word)
 );
 
+-- Palabras/emojis prohibidos para la "Moderación extrema de usuarios":
+-- a diferencia de banned_words (que filtra el TEXTO de los mensajes),
+-- esta lista se usa para revisar el nombre, usuario, descripción (bio) y
+-- foto de perfil de quien pide entrar al grupo, al momento de aceptar su
+-- solicitud de ingreso (ver handlers/xmod.py).
+CREATE TABLE IF NOT EXISTS xmod_words (
+    group_id  INTEGER NOT NULL,
+    word      TEXT NOT NULL,
+    added_by  INTEGER,
+    added_at  INTEGER NOT NULL,
+    PRIMARY KEY (group_id, word)
+);
+
 CREATE TABLE IF NOT EXISTS warnings (
     group_id    INTEGER NOT NULL,
     user_id     INTEGER NOT NULL,
@@ -289,6 +302,13 @@ _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         # un mensaje del canal al bot desde el menú de configuración.
         ("captcha_log_chat_id", "INTEGER"),
         ("captcha_log_title", "TEXT"),
+        # --- Moderación extrema de usuarios (revisión al aceptar solicitudes) ---
+        ("xmod_enabled", "INTEGER NOT NULL DEFAULT 0"),
+        ("xmod_punishment", "TEXT NOT NULL DEFAULT 'ban'"),   # ban | mute
+        ("xmod_mute_seconds", "INTEGER NOT NULL DEFAULT 0"),  # 0 = mute permanente
+        ("xmod_check_name", "INTEGER NOT NULL DEFAULT 1"),
+        ("xmod_check_bio", "INTEGER NOT NULL DEFAULT 1"),
+        ("xmod_check_photo", "INTEGER NOT NULL DEFAULT 0"),
     ],
     "known_groups": [
         # Grupo "activado" por el propietario mediante /activar. Mientras
@@ -367,6 +387,12 @@ class GroupSettings:
     captcha_max_age: int = 0            # 0 = sin límite superior
     captcha_log_chat_id: Optional[int] = None
     captcha_log_title: Optional[str] = None
+    xmod_enabled: bool = False
+    xmod_punishment: str = "ban"        # ban | mute
+    xmod_mute_seconds: int = 0          # 0 = mute permanente
+    xmod_check_name: bool = True
+    xmod_check_bio: bool = True
+    xmod_check_photo: bool = False
 
 
 @dataclass(slots=True)
@@ -763,6 +789,8 @@ class Database:
         "welcome_content_type", "welcome_file_id", "welcome_buttons",
         "captcha_enabled", "captcha_action", "captcha_min_age", "captcha_max_age",
         "captcha_log_chat_id", "captcha_log_title",
+        "xmod_enabled", "xmod_punishment", "xmod_mute_seconds",
+        "xmod_check_name", "xmod_check_bio", "xmod_check_photo",
     }
 
     async def get_group_settings(self, group_id: int) -> GroupSettings:
@@ -805,6 +833,12 @@ class Database:
             captcha_max_age=(row["captcha_max_age"] if "captcha_max_age" in keys and row["captcha_max_age"] is not None else 0),
             captcha_log_chat_id=(row["captcha_log_chat_id"] if "captcha_log_chat_id" in keys else None),
             captcha_log_title=(row["captcha_log_title"] if "captcha_log_title" in keys else None),
+            xmod_enabled=bool(row["xmod_enabled"]) if "xmod_enabled" in keys and row["xmod_enabled"] is not None else False,
+            xmod_punishment=(row["xmod_punishment"] if "xmod_punishment" in keys and row["xmod_punishment"] else "ban"),
+            xmod_mute_seconds=(row["xmod_mute_seconds"] if "xmod_mute_seconds" in keys and row["xmod_mute_seconds"] is not None else 0),
+            xmod_check_name=bool(row["xmod_check_name"]) if "xmod_check_name" in keys and row["xmod_check_name"] is not None else True,
+            xmod_check_bio=bool(row["xmod_check_bio"]) if "xmod_check_bio" in keys and row["xmod_check_bio"] is not None else True,
+            xmod_check_photo=bool(row["xmod_check_photo"]) if "xmod_check_photo" in keys and row["xmod_check_photo"] is not None else False,
         )
 
     async def set_group_setting(self, group_id: int, column: str, value) -> None:
@@ -1007,6 +1041,39 @@ class Database:
     async def get_banned_words(self, group_id: int) -> list[str]:
         cursor = await self.conn.execute(
             "SELECT word FROM banned_words WHERE group_id = ? ORDER BY word", (group_id,)
+        )
+        rows = await cursor.fetchall()
+        return [row["word"] for row in rows]
+
+    # ------------------------------------------------------------------ #
+    # Palabras/emojis prohibidos — Moderación extrema de usuarios
+    # ------------------------------------------------------------------ #
+    async def add_xmod_word(self, group_id: int, word: str, added_by: int) -> bool:
+        word = word.strip().lower()
+        if not word:
+            return False
+        await self.conn.execute(
+            """
+            INSERT INTO xmod_words (group_id, word, added_by, added_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(group_id, word) DO NOTHING
+            """,
+            (group_id, word, added_by, int(time.time())),
+        )
+        await self.conn.commit()
+        return True
+
+    async def remove_xmod_word(self, group_id: int, word: str) -> bool:
+        word = word.strip().lower()
+        cursor = await self.conn.execute(
+            "DELETE FROM xmod_words WHERE group_id = ? AND word = ?", (group_id, word)
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def get_xmod_words(self, group_id: int) -> list[str]:
+        cursor = await self.conn.execute(
+            "SELECT word FROM xmod_words WHERE group_id = ? ORDER BY word", (group_id,)
         )
         rows = await cursor.fetchall()
         return [row["word"] for row in rows]

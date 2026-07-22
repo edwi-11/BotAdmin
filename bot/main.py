@@ -139,6 +139,7 @@ from handlers.utils_cmds import (
     send_command,
 )
 from handlers.warnings import warnings_callback
+from handlers.xmod import try_consume_pending_xmod_words, xmod_menu_callback
 from utils.logger import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -351,6 +352,8 @@ async def on_message_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     if await try_consume_pending_words(update, context):
         return
+    if await try_consume_pending_xmod_words(update, context):
+        return
     if await try_consume_pending_input(update, context):
         return
     await brb_text_trigger(update, context)
@@ -424,6 +427,7 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(words_menu_callback, pattern=r"^w:"))
     application.add_handler(CallbackQueryHandler(cleanup_menu_callback, pattern=r"^c:"))
     application.add_handler(CallbackQueryHandler(warnings_callback, pattern=r"^aw:"))
+    application.add_handler(CallbackQueryHandler(xmod_menu_callback, pattern=r"^xm:"))
 
     # --- Mensajes secretos (modo en línea, estilo @mensajesecretobot) ---
     application.add_handler(InlineQueryHandler(secret_inline_query))

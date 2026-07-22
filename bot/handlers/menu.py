@@ -120,6 +120,9 @@ def build_main_menu(group_id: int, is_private: bool) -> InlineKeyboardMarkup:
             InlineKeyboardButton("❗ Advertencias", callback_data=f"aw:menu:{group_id}"),
             InlineKeyboardButton("🔞 Captcha", callback_data=f"cap:menu:{group_id}"),
         ],
+        [
+            InlineKeyboardButton("🛡 Moderación extrema de usuarios", callback_data=f"xm:menu:{group_id}"),
+        ],
     ]
     for i in range(0, len(SOON_SECTIONS), 2):
         pair = SOON_SECTIONS[i:i + 2]
