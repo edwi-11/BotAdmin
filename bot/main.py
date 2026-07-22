@@ -63,6 +63,13 @@ from handlers.economy import (
     tragamonedas_command,
     transferir_command,
 )
+from handlers.captcha import (
+    captcha_gatekeeper,
+    captcha_menu_callback,
+    try_consume_captcha_age_edit,
+    try_consume_captcha_answer,
+    try_consume_captcha_log_forward,
+)
 from handlers.cleanup import (
     cleanup_menu_callback,
     on_call_started_cleanup,
@@ -303,15 +310,27 @@ async def post_shutdown(application: Application) -> None:
 async def on_message_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Router para mensajes sin comando (texto o media):
-    0) Si el autor de un mensaje secreto está mandando el texto editado
+    0) Si hay un captcha de edad pendiente para quien escribe por privado,
+       se consume aquí (tiene prioridad: mientras alguien está silenciado
+       esperando el captcha, no debería quedar "atrapado" en ningún otro
+       wizard).
+    0.1) Wizards propios del menú de captcha (rango de edad / reenvío del
+       canal de registros), se consumen aquí.
+    1) Si el autor de un mensaje secreto está mandando el texto editado
        (en el chat privado con el bot), se consume aquí.
-    1) Si el editor de mensajes recurrentes está esperando un campo
+    2) Si el editor de mensajes recurrentes está esperando un campo
        (foto/texto/botones), se consume aquí.
-    2) Si el usuario está agregando/eliminando palabras prohibidas, se consume aquí.
-    3) Si el usuario tiene una edición pendiente desde el menú de botones
+    3) Si el usuario está agregando/eliminando palabras prohibidas, se consume aquí.
+    4) Si el usuario tiene una edición pendiente desde el menú de botones
        (ej. estaba escribiendo el nuevo mensaje de bienvenida), se consume aquí.
-    4) Si no, se comprueba si el mensaje es un disparador "brb" en texto plano.
+    5) Si no, se comprueba si el mensaje es un disparador "brb" en texto plano.
     """
+    if await try_consume_captcha_answer(update, context):
+        return
+    if await try_consume_captcha_age_edit(update, context):
+        return
+    if await try_consume_captcha_log_forward(update, context):
+        return
     if await try_consume_pending_secret_edit(update, context):
         return
     if await try_consume_draft_input(update, context):
@@ -357,6 +376,18 @@ def build_application() -> Application:
     application.add_handler(
         MessageHandler(filters.COMMAND & filters.ChatType.GROUPS, group_gate), group=-3
     )
+
+    # --- Captcha de edad: máxima prioridad de todas (grupo -6), para
+    # borrar/silenciar el primer mensaje de cada usuario ANTES que
+    # cualquier otro handler llegue a verlo (historial de /q, filtro de
+    # palabras, AFK, "@admin", etc.) ---
+    application.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS & ~filters.COMMAND & ~filters.StatusUpdate.ALL, captcha_gatekeeper
+        ),
+        group=-6,
+    )
+    application.add_handler(CallbackQueryHandler(captcha_menu_callback, pattern=r"^cap:"))
 
     # --- Historial en memoria para /q N y /q r ---
     # Se registra bien temprano (grupo -4) y para TODOS los mensajes de

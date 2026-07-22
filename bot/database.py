@@ -199,6 +199,25 @@ CREATE TABLE IF NOT EXISTS join_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_join_requests_pending ON join_requests (chat_id, status, requested_at);
 
+-- Estado del captcha de edad por usuario y grupo. Una fila por (grupo,
+-- usuario): se crea en 'pending' apenas se detecta y borra su primer
+-- mensaje, y pasa a 'passed' o 'rejected' cuando responde por privado (o
+-- se queda en 'pending' para siempre si nunca contesta). Mientras exista
+-- una fila para ese (grupo, usuario) no se lo vuelve a interceptar.
+CREATE TABLE IF NOT EXISTS captcha_state (
+    group_id     INTEGER NOT NULL,
+    user_id      INTEGER NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending',  -- pending | passed | rejected
+    user_name    TEXT,
+    username     TEXT,
+    group_title  TEXT,
+    age          INTEGER,
+    created_at   INTEGER NOT NULL,
+    resolved_at  INTEGER,
+    PRIMARY KEY (group_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_captcha_state_user ON captcha_state (user_id, status);
+
 -- Reportes creados con /reportar o escribiendo "@admin" (con o sin motivo).
 -- Cada reporte se notifica por privado a todos los administradores del
 -- grupo; "status" se alterna entre 'pending' y 'resolved' con el botón
@@ -258,6 +277,18 @@ _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("welcome_content_type", "TEXT NOT NULL DEFAULT 'text'"),
         ("welcome_file_id", "TEXT"),
         ("welcome_buttons", "TEXT NOT NULL DEFAULT '[]'"),
+        # --- Captcha de edad ---
+        ("captcha_enabled", "INTEGER NOT NULL DEFAULT 0"),
+        # Qué se hace con quien no cumple la edad permitida: 'mute' (se
+        # queda silenciado permanentemente) o 'ban' (se lo expulsa).
+        ("captcha_action", "TEXT NOT NULL DEFAULT 'mute'"),
+        ("captcha_min_age", "INTEGER NOT NULL DEFAULT 18"),
+        # 0 = sin límite superior.
+        ("captcha_max_age", "INTEGER NOT NULL DEFAULT 0"),
+        # Canal de registros del captcha (opcional). Se completa reenviando
+        # un mensaje del canal al bot desde el menú de configuración.
+        ("captcha_log_chat_id", "INTEGER"),
+        ("captcha_log_title", "TEXT"),
     ],
     "known_groups": [
         # Grupo "activado" por el propietario mediante /activar. Mientras
@@ -326,6 +357,33 @@ class GroupSettings:
     welcome_content_type: str = "text"  # text | photo | video | animation | document
     welcome_file_id: Optional[str] = None
     welcome_buttons: str = "[]"
+    captcha_enabled: bool = False
+    captcha_action: str = "mute"        # mute | ban
+    captcha_min_age: int = 18
+    captcha_max_age: int = 0            # 0 = sin límite superior
+    captcha_log_chat_id: Optional[int] = None
+    captcha_log_title: Optional[str] = None
+
+
+@dataclass(slots=True)
+class CaptchaState:
+    group_id: int
+    user_id: int
+    status: str  # pending | passed | rejected
+    user_name: Optional[str]
+    username: Optional[str]
+    group_title: Optional[str]
+    age: Optional[int]
+    created_at: int
+    resolved_at: Optional[int]
+
+
+def _row_to_captcha_state(row: aiosqlite.Row) -> CaptchaState:
+    return CaptchaState(
+        group_id=row["group_id"], user_id=row["user_id"], status=row["status"],
+        user_name=row["user_name"], username=row["username"], group_title=row["group_title"],
+        age=row["age"], created_at=row["created_at"], resolved_at=row["resolved_at"],
+    )
 
 
 @dataclass(slots=True)
@@ -697,6 +755,8 @@ class Database:
         "filter_punishment", "filter_mute_seconds", "filter_delete",
         "warn_limit", "warn_action", "warn_mute_seconds", "welcome_send_to",
         "welcome_content_type", "welcome_file_id", "welcome_buttons",
+        "captcha_enabled", "captcha_action", "captcha_min_age", "captcha_max_age",
+        "captcha_log_chat_id", "captcha_log_title",
     }
 
     async def get_group_settings(self, group_id: int) -> GroupSettings:
@@ -733,6 +793,12 @@ class Database:
             ),
             welcome_file_id=(row["welcome_file_id"] if "welcome_file_id" in keys else None),
             welcome_buttons=(row["welcome_buttons"] if "welcome_buttons" in keys and row["welcome_buttons"] else "[]"),
+            captcha_enabled=bool(row["captcha_enabled"]) if "captcha_enabled" in keys and row["captcha_enabled"] is not None else False,
+            captcha_action=(row["captcha_action"] if "captcha_action" in keys and row["captcha_action"] else "mute"),
+            captcha_min_age=(row["captcha_min_age"] if "captcha_min_age" in keys and row["captcha_min_age"] is not None else 18),
+            captcha_max_age=(row["captcha_max_age"] if "captcha_max_age" in keys and row["captcha_max_age"] is not None else 0),
+            captcha_log_chat_id=(row["captcha_log_chat_id"] if "captcha_log_chat_id" in keys else None),
+            captcha_log_title=(row["captcha_log_title"] if "captcha_log_title" in keys else None),
         )
 
     async def set_group_setting(self, group_id: int, column: str, value) -> None:
@@ -1428,4 +1494,56 @@ class Database:
         )
         rows = await cursor.fetchall()
         return [(row["admin_id"], row["message_id"]) for row in rows]
+
+    # ------------------------------------------------------------------ #
+    # Captcha de edad
+    # ------------------------------------------------------------------ #
+    async def get_captcha_state(self, group_id: int, user_id: int) -> Optional[CaptchaState]:
+        cursor = await self.conn.execute(
+            "SELECT * FROM captcha_state WHERE group_id = ? AND user_id = ?", (group_id, user_id)
+        )
+        row = await cursor.fetchone()
+        return _row_to_captcha_state(row) if row else None
+
+    async def start_captcha(
+        self, group_id: int, user_id: int, user_name: Optional[str],
+        username: Optional[str], group_title: Optional[str],
+    ) -> None:
+        """Crea la fila 'pending' para este (grupo, usuario). Si ya existe
+        una fila (pending/passed/rejected) no hace nada, para no pisar un
+        estado ya resuelto."""
+        await self.conn.execute(
+            """
+            INSERT INTO captcha_state (group_id, user_id, status, user_name, username, group_title, created_at)
+            VALUES (?, ?, 'pending', ?, ?, ?, ?)
+            ON CONFLICT(group_id, user_id) DO NOTHING
+            """,
+            (group_id, user_id, user_name, username, group_title, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def get_pending_captcha_for_user(self, user_id: int) -> Optional[CaptchaState]:
+        """Busca la verificación de edad pendiente más reciente de este
+        usuario (en cualquier grupo), para poder resolverla apenas
+        responda por privado."""
+        cursor = await self.conn.execute(
+            "SELECT * FROM captcha_state WHERE user_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1",
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        return _row_to_captcha_state(row) if row else None
+
+    async def resolve_captcha(self, group_id: int, user_id: int, status: str, age: Optional[int]) -> None:
+        await self.conn.execute(
+            "UPDATE captcha_state SET status = ?, age = ?, resolved_at = ? WHERE group_id = ? AND user_id = ?",
+            (status, age, int(time.time()), group_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def clear_captcha_state(self, group_id: int, user_id: int) -> None:
+        """Permite volver a captarlo (ej. si un admin quiere reintentar)."""
+        await self.conn.execute(
+            "DELETE FROM captcha_state WHERE group_id = ? AND user_id = ?", (group_id, user_id)
+        )
+        await self.conn.commit()
 

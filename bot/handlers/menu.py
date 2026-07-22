@@ -44,7 +44,6 @@ logger = logging.getLogger(__name__)
 SOON_SECTIONS: list[tuple[str, str, str]] = [
     ("antispam", "Antispam", "📧"),
     ("antiflood", "Anti-flood", "🗣"),
-    ("captcha", "Captcha", "🧠"),
     ("multimedia", "Multimedia", "📸"),
     ("nocturno", "Modo nocturno", "🌙"),
 ]
@@ -119,6 +118,7 @@ def build_main_menu(group_id: int, is_private: bool) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton("❗ Advertencias", callback_data=f"aw:menu:{group_id}"),
+            InlineKeyboardButton("🔞 Captcha", callback_data=f"cap:menu:{group_id}"),
         ],
     ]
     for i in range(0, len(SOON_SECTIONS), 2):
