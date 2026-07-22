@@ -304,9 +304,13 @@ _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("dm_ok", "INTEGER NOT NULL DEFAULT 0"),
     ],
     "broadcast_queue": [
-        # A quién se manda el anuncio: 'groups' (todos los grupos, como
-        # antes) o 'users' (privado, solo a quien nos pueda escribir).
+        # A quién se manda el anuncio: 'groups' (todos los grupos),
+        # 'users' (privado, solo a quien nos pueda escribir) o
+        # 'specific' (solo a los grupos elegidos en target_group_ids).
         ("target", "TEXT NOT NULL DEFAULT 'groups'"),
+        # JSON con la lista de group_id elegidos, solo se usa cuando
+        # target = 'specific'.
+        ("target_group_ids", "TEXT NOT NULL DEFAULT '[]'"),
     ],
     "join_requests": [
         # 1 = ya le mandamos la bienvenida privada apenas mandó la
@@ -447,7 +451,8 @@ class BroadcastMessage:
     sent_at: Optional[int]
     sent_count: int
     failed_count: int
-    target: str = "groups"  # groups | users
+    target: str = "groups"  # groups | users | specific
+    target_group_ids: str = "[]"
 
 
 def _row_to_broadcast(row: aiosqlite.Row) -> BroadcastMessage:
@@ -458,6 +463,7 @@ def _row_to_broadcast(row: aiosqlite.Row) -> BroadcastMessage:
         status=row["status"], created_by=row["created_by"], created_at=row["created_at"],
         sent_at=row["sent_at"], sent_count=row["sent_count"], failed_count=row["failed_count"],
         target=(row["target"] if "target" in keys and row["target"] else "groups"),
+        target_group_ids=(row["target_group_ids"] if "target_group_ids" in keys and row["target_group_ids"] else "[]"),
     )
 
 
@@ -1245,14 +1251,15 @@ class Database:
     async def create_broadcast(
         self, content_type: str, text: Optional[str], entities: str,
         file_id: Optional[str], buttons: str, created_by: int, target: str = "groups",
+        target_group_ids: str = "[]",
     ) -> int:
         cursor = await self.conn.execute(
             """
             INSERT INTO broadcast_queue
-                (content_type, text, entities, file_id, buttons, status, created_by, created_at, target)
-            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+                (content_type, text, entities, file_id, buttons, status, created_by, created_at, target, target_group_ids)
+            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
             """,
-            (content_type, text, entities, file_id, buttons, created_by, int(time.time()), target),
+            (content_type, text, entities, file_id, buttons, created_by, int(time.time()), target, target_group_ids),
         )
         await self.conn.commit()
         return cursor.lastrowid

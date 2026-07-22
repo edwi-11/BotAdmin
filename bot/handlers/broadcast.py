@@ -67,6 +67,7 @@ def _new_draft() -> dict:
         "content_type": "text", "text": None, "entities_json": "[]",
         "file_id": None, "buttons_json": "[]", "awaiting": None,
         "menu_chat_id": None, "menu_message_id": None, "send_target": "groups",
+        "selected_groups": [],
     }
 
 
@@ -127,8 +128,9 @@ def _draft_view(draft: dict) -> tuple[str, InlineKeyboardMarkup]:
         "📢 *Compositor de anuncio*",
         "",
         "Este mensaje se puede enviar a *todos los grupos* donde esté el bot de "
-        "moderación, o por privado a *los usuarios* que ya iniciaron chat con él "
-        "\\(elige abajo\\)\\. Revisa bien antes de enviarlo\\.",
+        "moderación, a *grupos específicos* que elijas, o por privado a *los "
+        "usuarios* que ya iniciaron chat con él \\(elige abajo\\)\\. Revisa bien "
+        "antes de enviarlo\\.",
         "",
         f"📷 Multimedia: *{escape_md(media_status)}*",
         f"📝 Texto: *{escape_md(text_status)}*",
@@ -140,6 +142,7 @@ def _draft_view(draft: dict) -> tuple[str, InlineKeyboardMarkup]:
         [InlineKeyboardButton("🔘 Botones", callback_data="b:buttons")],
         [InlineKeyboardButton("👁 Vista previa", callback_data="b:preview")],
         [InlineKeyboardButton("📢 Enviar a todos los grupos", callback_data="b:sendask:groups")],
+        [InlineKeyboardButton("🎯 Enviar a grupos específicos", callback_data="b:selgrp:0")],
         [InlineKeyboardButton("👥 Enviar a los usuarios", callback_data="b:sendask:users")],
         [InlineKeyboardButton("❌ Descartar", callback_data="b:cancel")],
     ]
@@ -148,6 +151,45 @@ def _draft_view(draft: dict) -> tuple[str, InlineKeyboardMarkup]:
 
 def _cancel_field_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Volver al editor", callback_data="b:back")]])
+
+
+GROUPS_PER_PAGE = 8
+
+
+def _group_selector_view(groups: list[tuple[int, str]], selected: list[int], page: int) -> tuple[str, InlineKeyboardMarkup]:
+    total_pages = max(1, (len(groups) + GROUPS_PER_PAGE - 1) // GROUPS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+    start = page * GROUPS_PER_PAGE
+    page_groups = groups[start:start + GROUPS_PER_PAGE]
+
+    text = "\n".join([
+        "🎯 *Elegí a qué grupos enviar el anuncio*",
+        "",
+        f"Seleccionados: *{len(selected)}* de {len(groups)}",
+        f"Página {page + 1}/{total_pages}",
+        "",
+        "Tocá un grupo para marcarlo/desmarcarlo\\.",
+    ])
+
+    rows = []
+    for group_id, title in page_groups:
+        mark = "✅" if group_id in selected else "⬜"
+        label = title or str(group_id)
+        if len(label) > 40:
+            label = label[:37] + "..."
+        rows.append([InlineKeyboardButton(f"{mark} {label}", callback_data=f"b:tgrp:{group_id}:{page}")])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️ Anterior", callback_data=f"b:selgrp:{page - 1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton("➡️ Siguiente", callback_data=f"b:selgrp:{page + 1}"))
+    if nav:
+        rows.append(nav)
+
+    rows.append([InlineKeyboardButton(f"✅ Continuar ({len(selected)} seleccionado(s))", callback_data="b:selgrpdone")])
+    rows.append([InlineKeyboardButton("🔙 Volver al editor", callback_data="b:back")])
+    return text, InlineKeyboardMarkup(rows)
 
 
 async def _render_draft(context: ContextTypes.DEFAULT_TYPE, draft: dict) -> None:
@@ -244,6 +286,59 @@ async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.answer()
         return
 
+    if action == "selgrp":
+        has_content = (draft["content_type"] == "text" and draft.get("text")) or \
+                      (draft["content_type"] != "text" and draft.get("file_id"))
+        if not has_content:
+            await query.answer("Primero define un texto o una foto/video.", show_alert=True)
+            return
+        groups = await db.get_known_groups()
+        if not groups:
+            await query.answer("El bot de moderación todavía no está en ningún grupo.", show_alert=True)
+            return
+        page = int(action_arg) if action_arg.isdigit() else 0
+        text, markup = _group_selector_view(groups, draft["selected_groups"], page)
+        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=markup)
+        await query.answer()
+        return
+
+    if action == "tgrp":
+        group_id_raw, _, page_raw = action_arg.partition(":")
+        try:
+            group_id = int(group_id_raw)
+        except ValueError:
+            await query.answer()
+            return
+        page = int(page_raw) if page_raw.isdigit() else 0
+        if group_id in draft["selected_groups"]:
+            draft["selected_groups"].remove(group_id)
+        else:
+            draft["selected_groups"].append(group_id)
+        groups = await db.get_known_groups()
+        text, markup = _group_selector_view(groups, draft["selected_groups"], page)
+        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=markup)
+        await query.answer()
+        return
+
+    if action == "selgrpdone":
+        if not draft["selected_groups"]:
+            await query.answer("Elegí al menos un grupo.", show_alert=True)
+            return
+        draft["send_target"] = "specific"
+        groups = dict(await db.get_known_groups())
+        names = [groups.get(gid, str(gid)) for gid in draft["selected_groups"]]
+        preview = ", ".join(names[:5]) + (f" y {len(names) - 5} más" if len(names) > 5 else "")
+        confirm = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Sí, enviar", callback_data="b:senddo"),
+            InlineKeyboardButton("❌ Cancelar", callback_data="b:back"),
+        ]])
+        await query.edit_message_text(
+            f"⚠️ Vas a enviar este anuncio a *{len(names)}* grupo\\(s\\): {escape_md(preview)}\\. ¿Confirmas?",
+            parse_mode=ParseMode.MARKDOWN_V2, reply_markup=confirm,
+        )
+        await query.answer()
+        return
+
     if action == "sendask":
         has_content = (draft["content_type"] == "text" and draft.get("text")) or \
                       (draft["content_type"] != "text" and draft.get("file_id"))
@@ -285,9 +380,13 @@ async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             content_type=draft["content_type"], text=draft.get("text"),
             entities=draft["entities_json"], file_id=file_ref,
             buttons=draft["buttons_json"], created_by=user.id, target=target,
+            target_group_ids=json.dumps(draft["selected_groups"]) if target == "specific" else "[]",
         )
         context.user_data.pop("broadcast_draft", None)
-        destino = "a los usuarios que ya iniciaron chat con el bot" if target == "users" else "a todos los grupos"
+        destino = {
+            "users": "a los usuarios que ya iniciaron chat con el bot",
+            "specific": f"a los {len(draft['selected_groups'])} grupo(s) elegidos",
+        }.get(target, "a todos los grupos")
         await query.edit_message_text(
             success(f"Anuncio #{broadcast_id} en cola. El bot de moderación lo enviará {destino} en los próximos segundos.")
         )

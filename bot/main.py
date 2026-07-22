@@ -12,6 +12,7 @@ menú de botones (/menu), sin necesidad de recordar ningún comando.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from pathlib import Path
@@ -215,20 +216,33 @@ def _extract_sent_file_id(message, content_type: str) -> Optional[str]:
 
 async def _broadcast_dispatch_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Revisa la cola de anuncios (llenada por el bot anunciador, si lo usas)
-    y envía cada anuncio pendiente a todos los grupos conocidos, o por
-    privado a los usuarios que ya pueden recibir mensajes del bot, según
-    el destino que se haya elegido al crear el anuncio."""
+    y envía cada anuncio pendiente a todos los grupos conocidos, a un
+    subconjunto de grupos elegido a mano, o por privado a los usuarios que
+    ya pueden recibir mensajes del bot, según el destino que se haya
+    elegido al crear el anuncio."""
     db: Database = context.application.bot_data["db"]
     pending = await db.get_pending_broadcasts()
     if not pending:
         return
 
     groups = await db.get_known_groups()
+    known_group_ids = {gid for gid, _title in groups}
     dm_users = await db.get_dm_ok_users()
 
     for broadcast in pending:
         is_users = broadcast.target == "users"
-        recipients = [uid for uid, _name, _username in dm_users] if is_users else [gid for gid, _title in groups]
+        if is_users:
+            recipients = [uid for uid, _name, _username in dm_users]
+        elif broadcast.target == "specific":
+            try:
+                chosen = json.loads(broadcast.target_group_ids or "[]")
+            except (TypeError, ValueError):
+                chosen = []
+            # Descartamos grupos que ya no conocemos (ej. el bot fue
+            # expulsado desde que se armó el anuncio).
+            recipients = [gid for gid in chosen if gid in known_group_ids]
+        else:
+            recipients = [gid for gid, _title in groups]
         recipient_kind = "usuario(s)" if is_users else "grupo(s)"
 
         sent_count = 0
