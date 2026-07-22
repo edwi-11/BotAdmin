@@ -76,7 +76,15 @@ from handlers.free import free_command, freelist_command, unfree_command
 from handlers.gemini_chat import ceo_trigger
 from handlers.menu import menu_callback, menu_command, try_consume_pending_input
 from utils.message_log import track_message
-from handlers.greetings import on_left_member, on_new_members
+from handlers.greetings import (
+    on_left_member,
+    on_new_members,
+    resetwelcomebotones_command,
+    resetwelcomeimg_command,
+    setwelcomebotones_command,
+    setwelcomeimg_command,
+)
+from handlers.reports import ADMIN_MENTION_RE, admin_mention_trigger, report_callback, report_command
 from handlers.moderation import (
     ban_command,
     delban_command,
@@ -366,6 +374,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("menu", menu_command))
     application.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^m:"))
+    application.add_handler(CallbackQueryHandler(report_callback, pattern=r"^rpt:"))
     application.add_handler(CallbackQueryHandler(recurring_callback, pattern=r"^r:"))
     application.add_handler(CallbackQueryHandler(words_menu_callback, pattern=r"^w:"))
     application.add_handler(CallbackQueryHandler(cleanup_menu_callback, pattern=r"^c:"))
@@ -399,6 +408,11 @@ def build_application() -> Application:
 
     # --- Moderación básica (los únicos comandos "/" que quedan) ---
     application.add_handler(CommandHandler("ban", ban_command))
+    application.add_handler(CommandHandler("reportar", report_command))
+    application.add_handler(CommandHandler("setwelcomeimg", setwelcomeimg_command))
+    application.add_handler(CommandHandler("resetwelcomeimg", resetwelcomeimg_command))
+    application.add_handler(CommandHandler("setwelcomebotones", setwelcomebotones_command))
+    application.add_handler(CommandHandler("resetwelcomebotones", resetwelcomebotones_command))
     application.add_handler(CommandHandler("delban", delban_command))
     application.add_handler(CommandHandler("kick", kick_command))
     application.add_handler(CommandHandler("delkick", delkick_command))
@@ -486,6 +500,15 @@ def build_application() -> Application:
     application.add_handler(
         MessageHandler(filters.ALL & ~filters.StatusUpdate.ALL, track_and_check_afk),
         group=-1,
+    )
+
+    # --- Reportes: "@admin [motivo]" en cualquier mensaje de texto de un
+    # grupo (respondiendo o no a otro mensaje). Se registra antes que
+    # ceo_trigger en el mismo grupo para que ambos convivan sin pisarse:
+    # solo se ejecuta el primer handler cuyo filtro matchee cada mensaje. ---
+    application.add_handler(
+        MessageHandler(filters.Regex(ADMIN_MENTION_RE) & filters.ChatType.GROUPS & ~filters.COMMAND, admin_mention_trigger),
+        group=2,
     )
 
     # --- Integración con Gemini: mensajes que empiezan con "ceo" (cualquier

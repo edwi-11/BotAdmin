@@ -198,6 +198,40 @@ CREATE TABLE IF NOT EXISTS join_requests (
     PRIMARY KEY (chat_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_join_requests_pending ON join_requests (chat_id, status, requested_at);
+
+-- Reportes creados con /reportar o escribiendo "@admin" (con o sin motivo).
+-- Cada reporte se notifica por privado a todos los administradores del
+-- grupo; "status" se alterna entre 'pending' y 'resolved' con el botón
+-- del propio mensaje, y ese cambio se refleja en TODAS las notificaciones
+-- ya enviadas (ver tabla report_notifications).
+CREATE TABLE IF NOT EXISTS reports (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id       INTEGER NOT NULL,
+    group_title    TEXT,
+    reporter_id    INTEGER NOT NULL,
+    reporter_name  TEXT NOT NULL,
+    reported_id    INTEGER,
+    reported_name  TEXT,
+    message_id     INTEGER,
+    message_link   TEXT,
+    reason         TEXT,
+    source         TEXT NOT NULL DEFAULT 'reportar',
+    status         TEXT NOT NULL DEFAULT 'pending',
+    created_at     INTEGER NOT NULL,
+    resolved_by    INTEGER,
+    resolved_at    INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_reports_group ON reports (group_id, status);
+
+-- Un registro por cada administrador al que se le mandó el reporte por
+-- privado, guardando el message_id de SU copia para poder editarla
+-- cuando alguien marque el reporte como resuelto/pendiente.
+CREATE TABLE IF NOT EXISTS report_notifications (
+    report_id   INTEGER NOT NULL,
+    admin_id    INTEGER NOT NULL,
+    message_id  INTEGER NOT NULL,
+    PRIMARY KEY (report_id, admin_id)
+);
 """
 
 # Columnas que se añadieron después de la primera versión del esquema.
@@ -219,6 +253,11 @@ _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("warn_mute_seconds", "INTEGER NOT NULL DEFAULT 3600"),
         # A dónde se manda el mensaje de bienvenida: 'group' | 'private' | 'both'.
         ("welcome_send_to", "TEXT NOT NULL DEFAULT 'group'"),
+        # Imagen/adjunto y botones opcionales para el mensaje de bienvenida.
+        # welcome_content_type: 'text' | 'photo' | 'video' | 'animation' | 'document'.
+        ("welcome_content_type", "TEXT NOT NULL DEFAULT 'text'"),
+        ("welcome_file_id", "TEXT"),
+        ("welcome_buttons", "TEXT NOT NULL DEFAULT '[]'"),
     ],
     "known_groups": [
         # Grupo "activado" por el propietario mediante /activar. Mientras
@@ -284,6 +323,9 @@ class GroupSettings:
     warn_action: str = "mute"           # mute | kick | ban
     warn_mute_seconds: int = 3600       # 0 = mute permanente (solo si warn_action == mute)
     welcome_send_to: str = "group"      # group | private | both
+    welcome_content_type: str = "text"  # text | photo | video | animation | document
+    welcome_file_id: Optional[str] = None
+    welcome_buttons: str = "[]"
 
 
 @dataclass(slots=True)
@@ -394,6 +436,36 @@ def _row_to_secret_message(row: aiosqlite.Row) -> SecretMessage:
         author_username=row["author_username"], targets=targets, text=row["text"],
         self_destruct=bool(row["self_destruct"]), created_at=row["created_at"],
         read_at=row["read_at"], read_by_id=row["read_by_id"], read_by_name=row["read_by_name"],
+    )
+
+
+@dataclass(slots=True)
+class Report:
+    id: int
+    group_id: int
+    group_title: Optional[str]
+    reporter_id: int
+    reporter_name: str
+    reported_id: Optional[int]
+    reported_name: Optional[str]
+    message_id: Optional[int]
+    message_link: Optional[str]
+    reason: Optional[str]
+    source: str
+    status: str
+    created_at: int
+    resolved_by: Optional[int]
+    resolved_at: Optional[int]
+
+
+def _row_to_report(row: aiosqlite.Row) -> Report:
+    return Report(
+        id=row["id"], group_id=row["group_id"], group_title=row["group_title"],
+        reporter_id=row["reporter_id"], reporter_name=row["reporter_name"],
+        reported_id=row["reported_id"], reported_name=row["reported_name"],
+        message_id=row["message_id"], message_link=row["message_link"],
+        reason=row["reason"], source=row["source"], status=row["status"],
+        created_at=row["created_at"], resolved_by=row["resolved_by"], resolved_at=row["resolved_at"],
     )
 
 
@@ -624,6 +696,7 @@ class Database:
         "delete_join", "delete_leave", "delete_call", "delete_pin", "delete_commands",
         "filter_punishment", "filter_mute_seconds", "filter_delete",
         "warn_limit", "warn_action", "warn_mute_seconds", "welcome_send_to",
+        "welcome_content_type", "welcome_file_id", "welcome_buttons",
     }
 
     async def get_group_settings(self, group_id: int) -> GroupSettings:
@@ -655,6 +728,11 @@ class Database:
             warn_action=(row["warn_action"] if "warn_action" in keys and row["warn_action"] else "mute"),
             warn_mute_seconds=(row["warn_mute_seconds"] if "warn_mute_seconds" in keys and row["warn_mute_seconds"] is not None else 3600),
             welcome_send_to=(row["welcome_send_to"] if "welcome_send_to" in keys and row["welcome_send_to"] else "group"),
+            welcome_content_type=(
+                row["welcome_content_type"] if "welcome_content_type" in keys and row["welcome_content_type"] else "text"
+            ),
+            welcome_file_id=(row["welcome_file_id"] if "welcome_file_id" in keys else None),
+            welcome_buttons=(row["welcome_buttons"] if "welcome_buttons" in keys and row["welcome_buttons"] else "[]"),
         )
 
     async def set_group_setting(self, group_id: int, column: str, value) -> None:
@@ -1289,4 +1367,65 @@ class Database:
             [(status, chat_id, uid) for uid in user_ids],
         )
         await self.conn.commit()
+
+    # ------------------------------------------------------------------ #
+    # Reportes (/reportar y "@admin")
+    # ------------------------------------------------------------------ #
+    async def add_report(
+        self,
+        group_id: int,
+        group_title: Optional[str],
+        reporter_id: int,
+        reporter_name: str,
+        reported_id: Optional[int],
+        reported_name: Optional[str],
+        message_id: Optional[int],
+        message_link: Optional[str],
+        reason: Optional[str],
+        source: str,
+    ) -> int:
+        cursor = await self.conn.execute(
+            """
+            INSERT INTO reports
+                (group_id, group_title, reporter_id, reporter_name, reported_id, reported_name,
+                 message_id, message_link, reason, source, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+            """,
+            (
+                group_id, group_title, reporter_id, reporter_name, reported_id, reported_name,
+                message_id, message_link, reason, source, int(time.time()),
+            ),
+        )
+        await self.conn.commit()
+        return cursor.lastrowid
+
+    async def get_report(self, report_id: int) -> Optional[Report]:
+        cursor = await self.conn.execute("SELECT * FROM reports WHERE id = ?", (report_id,))
+        row = await cursor.fetchone()
+        return _row_to_report(row) if row else None
+
+    async def set_report_status(self, report_id: int, status: str, resolved_by: Optional[int]) -> None:
+        await self.conn.execute(
+            "UPDATE reports SET status = ?, resolved_by = ?, resolved_at = ? WHERE id = ?",
+            (status, resolved_by, int(time.time()) if status == "resolved" else None, report_id),
+        )
+        await self.conn.commit()
+
+    async def add_report_notification(self, report_id: int, admin_id: int, message_id: int) -> None:
+        await self.conn.execute(
+            """
+            INSERT INTO report_notifications (report_id, admin_id, message_id)
+            VALUES (?, ?, ?)
+            ON CONFLICT(report_id, admin_id) DO UPDATE SET message_id = excluded.message_id
+            """,
+            (report_id, admin_id, message_id),
+        )
+        await self.conn.commit()
+
+    async def get_report_notifications(self, report_id: int) -> list[tuple[int, int]]:
+        cursor = await self.conn.execute(
+            "SELECT admin_id, message_id FROM report_notifications WHERE report_id = ?", (report_id,)
+        )
+        rows = await cursor.fetchall()
+        return [(row["admin_id"], row["message_id"]) for row in rows]
 

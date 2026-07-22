@@ -6,6 +6,14 @@ Comandos (solo administradores, excepto /rules que es público):
     /setwelcome <texto>   - define el mensaje de bienvenida
     /welcome [on|off]      - activa/desactiva o muestra el estado
     /resetwelcome           - vuelve al mensaje de bienvenida por defecto
+    /setwelcomeimg           - respondiendo a una foto/video/GIF/documento,
+                                lo usa como imagen de la bienvenida
+                                ("/setwelcomeimg off" para quitarla)
+    /setwelcomebotones        - define botones en línea para la bienvenida,
+                                con la misma sintaxis que los mensajes
+                                recurrentes: "Texto - https://enlace.com"
+                                (una fila por línea, " | " separa botones
+                                de una misma fila; "off" para quitarlos)
     /setgoodbye <texto>      - define el mensaje de despedida
     /goodbye [on|off]         - activa/desactiva o muestra el estado
     /resetgoodbye              - vuelve al mensaje de despedida por defecto
@@ -35,7 +43,9 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from database import DEFAULT_GOODBYE_TEXT, DEFAULT_RULES_TEXT, DEFAULT_WELCOME_TEXT, Database
-from utils.formatting import error, render_template, success
+from handlers.recurring import MEDIA_LABELS, _extract_content
+from utils.entities import build_inline_keyboard, buttons_to_json, describe_buttons, json_to_buttons, parse_buttons_text
+from utils.formatting import error, escape_md, render_template, success
 from utils.permissions import check_executor_is_admin
 
 logger = logging.getLogger(__name__)
@@ -108,7 +118,18 @@ async def welcome_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not context.args:
         settings = await db.get_group_settings(chat_id)
         estado = "activada ✅" if settings.welcome_enabled else "desactivada ❌"
-        await message.reply_text(f"La bienvenida está actualmente {estado}\\.", parse_mode=ParseMode.MARKDOWN_V2)
+        media_label = (
+            MEDIA_LABELS.get(settings.welcome_content_type, settings.welcome_content_type)
+            if settings.welcome_content_type != "text" and settings.welcome_file_id
+            else "Ninguna"
+        )
+        botones = len(json_to_buttons(settings.welcome_buttons))
+        await message.reply_text(
+            f"La bienvenida está actualmente {estado}\\.\n"
+            f"🖼 Imagen/adjunto: {escape_md(media_label)}\n"
+            f"🔘 Botones configurados: {botones}",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
         return
 
     arg = context.args[0].lower()
@@ -126,6 +147,119 @@ async def resetwelcome_command(update: Update, context: ContextTypes.DEFAULT_TYP
     db = _get_db(context)
     await db.reset_group_setting(update.effective_chat.id, "welcome_text")
     await update.effective_message.reply_text(success("Mensaje de bienvenida restablecido al valor por defecto."))
+
+
+# --------------------------------------------------------------------- #
+# Envío de la bienvenida con imagen/adjunto + botones opcionales.
+# Reutiliza _extract_content() de handlers/recurring.py (misma lógica que
+# usan los mensajes recurrentes para reconocer foto/video/gif/documento) y
+# los helpers de utils/entities.py para los botones en línea, en vez de
+# reimplementar todo esto desde cero.
+# --------------------------------------------------------------------- #
+async def _send_welcome_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, settings, text: str):
+    """Envía el mensaje de bienvenida ya renderizado (placeholders resueltos),
+    con la imagen/adjunto y los botones configurados, si los hay."""
+    markup = build_inline_keyboard(json_to_buttons(settings.welcome_buttons))
+    content_type = settings.welcome_content_type
+    file_id = settings.welcome_file_id
+
+    if content_type == "text" or not file_id:
+        return await context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+    kwargs = dict(caption=text, parse_mode=ParseMode.HTML, reply_markup=markup)
+    if content_type == "photo":
+        return await context.bot.send_photo(chat_id, photo=file_id, **kwargs)
+    if content_type == "video":
+        return await context.bot.send_video(chat_id, video=file_id, **kwargs)
+    if content_type == "animation":
+        return await context.bot.send_animation(chat_id, animation=file_id, **kwargs)
+    if content_type == "document":
+        return await context.bot.send_document(chat_id, document=file_id, **kwargs)
+    # Tipo desconocido/no soportado: no rompemos la bienvenida, la mandamos como texto.
+    return await context.bot.send_message(chat_id, text, parse_mode=ParseMode.HTML, reply_markup=markup)
+
+
+async def setwelcomeimg_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _guard_group_admin(update, context):
+        return
+    message = update.effective_message
+    db = _get_db(context)
+    chat_id = update.effective_chat.id
+
+    if context.args and context.args[0].lower() in ("off", "quitar", "borrar", "no"):
+        await db.set_group_setting(chat_id, "welcome_content_type", "text")
+        await db.set_group_setting(chat_id, "welcome_file_id", None)
+        await message.reply_text(success("Imagen/adjunto de la bienvenida eliminado."))
+        return
+
+    target_message = message.reply_to_message
+    if target_message is None:
+        await message.reply_text(
+            error(
+                "Debes responder a una foto, video, GIF o documento con /setwelcomeimg "
+                "para usarlo como imagen de bienvenida, o usar /setwelcomeimg off para quitarlo."
+            )
+        )
+        return
+
+    content = _extract_content(target_message)
+    if content is None or content[0] == "text" or content[3] is None:
+        await message.reply_text(error("El mensaje al que respondiste no tiene una imagen o adjunto válido."))
+        return
+
+    content_type, _caption_unused, _entities_unused, file_id = content
+    await db.set_group_setting(chat_id, "welcome_content_type", content_type)
+    await db.set_group_setting(chat_id, "welcome_file_id", file_id)
+    label = MEDIA_LABELS.get(content_type, content_type)
+    await message.reply_text(success(f"Imagen de bienvenida actualizada ({label})."))
+
+
+async def resetwelcomeimg_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _guard_group_admin(update, context):
+        return
+    db = _get_db(context)
+    chat_id = update.effective_chat.id
+    await db.set_group_setting(chat_id, "welcome_content_type", "text")
+    await db.set_group_setting(chat_id, "welcome_file_id", None)
+    await update.effective_message.reply_text(success("Imagen/adjunto de la bienvenida eliminado."))
+
+
+async def setwelcomebotones_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _guard_group_admin(update, context):
+        return
+    message = update.effective_message
+    db = _get_db(context)
+    chat_id = update.effective_chat.id
+
+    text = _extract_text(message, context)
+    if not text or text.strip().lower() in ("off", "quitar", "borrar", "no"):
+        await db.set_group_setting(chat_id, "welcome_buttons", "[]")
+        await message.reply_text(success("Botones de la bienvenida eliminados."))
+        return
+
+    rows, errors = parse_buttons_text(text)
+    if errors:
+        await message.reply_text(error("Hay errores en los botones:\n" + "\n".join(errors)))
+        return
+    if not rows:
+        await message.reply_text(
+            error(
+                "No se detectó ningún botón válido. Ejemplo:\n"
+                "/setwelcomebotones 📢 Canal - https://t.me/canal | 📜 Reglas - https://t.me/reglas"
+            )
+        )
+        return
+
+    await db.set_group_setting(chat_id, "welcome_buttons", buttons_to_json(rows))
+    await message.reply_text(success("Botones de la bienvenida actualizados.") + "\n\n" + describe_buttons(rows))
+
+
+async def resetwelcomebotones_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _guard_group_admin(update, context):
+        return
+    db = _get_db(context)
+    await db.set_group_setting(update.effective_chat.id, "welcome_buttons", "[]")
+    await update.effective_message.reply_text(success("Botones de la bienvenida eliminados."))
 
 
 # --------------------------------------------------------------------- #
@@ -301,7 +435,7 @@ async def on_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         if need_group:
             try:
-                sent = await context.bot.send_message(chat.id, text, parse_mode=ParseMode.HTML)
+                sent = await _send_welcome_message(context, chat.id, settings, text)
                 if settings.clean_welcome:
                     context.chat_data["last_welcome_msg_id"] = sent.message_id
             except TelegramError as exc:
@@ -312,7 +446,7 @@ async def on_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             if already_welcomed:
                 continue  # ya le llegó por privado apenas mandó la solicitud de ingreso
             try:
-                await context.bot.send_message(new_user.id, text, parse_mode=ParseMode.HTML)
+                await _send_welcome_message(context, new_user.id, settings, text)
                 await db.set_dm_ok(new_user.id, True)
             except TelegramError as exc:
                 # Motivo casi siempre: el usuario nunca abrió un chat con el
