@@ -362,12 +362,28 @@ async def on_message_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/start normal -> abre el menú. /start secedit_<id> (deep link usado
     por el botón "Editar mensaje" de un mensaje secreto) -> se desvía para
-    pedir el texto nuevo en vez de mostrar el menú."""
+    pedir el texto nuevo en vez de mostrar el menú. Si el usuario tiene un
+    captcha de edad pendiente (llegó acá tocando el botón "Iniciar chat
+    con el bot" desde un grupo, porque el bot no pudo escribirle por
+    privado de entrada), se le manda la pregunta de edad directamente,
+    sin importar si administra o no algún grupo."""
     if update.effective_chat.type == "private":
         db: Database = context.application.bot_data["db"]
         user = update.effective_user
         await db.upsert_user(user.id, user.username, user.first_name)
         await db.set_dm_ok(user.id, True)
+
+        pending = await db.get_pending_captcha_for_user(user.id)
+        if pending is not None:
+            group_title = pending.group_title or str(pending.group_id)
+            await update.effective_message.reply_text(
+                f"🔞 Detecté un mensaje tuyo en el grupo «{group_title}».\n\n"
+                "Antes de poder participar necesito verificar tu edad. Respondé "
+                "este mensaje con tu edad en números, sin puntos, guiones ni "
+                "ningún otro carácter (por ejemplo: 21)."
+            )
+            return
+
     if await handle_secret_start_deeplink(update, context):
         return
     await menu_command(update, context)
