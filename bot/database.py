@@ -322,6 +322,10 @@ _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         # a alguien que nunca abrió un chat con él, así que esta bandera es
         # la única forma confiable de saber a quién sí se le puede escribir.
         ("dm_ok", "INTEGER NOT NULL DEFAULT 0"),
+        # Fecha de nacimiento (solo día y mes) para calcular el signo del
+        # /horoscopo. NULL hasta que el usuario la indique la primera vez.
+        ("birth_day", "INTEGER"),
+        ("birth_month", "INTEGER"),
     ],
     "broadcast_queue": [
         # A quién se manda el anuncio: 'groups' (todos los grupos),
@@ -622,6 +626,28 @@ class Database:
         )
         row = await cursor.fetchone()
         return int(row["user_id"]) if row else None
+
+    async def set_user_birthdate(self, user_id: int, day: int, month: int) -> None:
+        await self.conn.execute(
+            """
+            INSERT INTO users (user_id, birth_day, birth_month, updated_at) VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                birth_day = excluded.birth_day,
+                birth_month = excluded.birth_month,
+                updated_at = excluded.updated_at
+            """,
+            (user_id, day, month, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def get_user_birthdate(self, user_id: int) -> Optional[tuple[int, int]]:
+        cursor = await self.conn.execute(
+            "SELECT birth_day, birth_month FROM users WHERE user_id = ?", (user_id,)
+        )
+        row = await cursor.fetchone()
+        if row is None or row["birth_day"] is None or row["birth_month"] is None:
+            return None
+        return int(row["birth_day"]), int(row["birth_month"])
 
     async def set_dm_ok(self, user_id: int, ok: bool) -> None:
         """Marca si le podemos escribir por privado a este usuario o no.

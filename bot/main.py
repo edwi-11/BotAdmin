@@ -82,6 +82,7 @@ from handlers.cleanup import (
 from handlers.filters_words import check_banned_words, try_consume_pending_words, words_menu_callback
 from handlers.free import free_command, freelist_command, unfree_command
 from handlers.gemini_chat import ceo_trigger
+from handlers.horoscopo import horoscopo_command, try_consume_pending_birthdate
 from handlers.menu import menu_callback, menu_command, try_consume_pending_input
 from utils.message_log import track_message
 from handlers.greetings import (
@@ -171,6 +172,7 @@ BOT_COMMANDS = [
     BotCommand("id", "Ver tu ID o el de a quien respondas"),
     BotCommand("info", "Ver información de un usuario"),
     BotCommand("ping", "Ver la latencia del bot"),
+    BotCommand("horoscopo", "Ver tu horóscopo del día"),
     BotCommand("pin", "Fijar el mensaje respondido (sin notificar)"),
     BotCommand("npin", "Fijar el mensaje respondido (con notificación)"),
     BotCommand("send", "Enviar un mensaje o reenviar contenido como el bot"),
@@ -356,6 +358,8 @@ async def on_message_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     if await try_consume_pending_input(update, context):
         return
+    if await try_consume_pending_birthdate(update, context):
+        return
     await brb_text_trigger(update, context)
 
 
@@ -493,6 +497,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("id", id_command))
     application.add_handler(CommandHandler("info", info_command))
     application.add_handler(CommandHandler("ping", ping_command))
+    application.add_handler(CommandHandler("horoscopo", horoscopo_command))
     application.add_handler(CommandHandler("pin", pin_command))
     application.add_handler(CommandHandler("npin", npin_command))
     application.add_handler(CommandHandler("send", send_command))
