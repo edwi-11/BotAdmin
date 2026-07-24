@@ -45,6 +45,7 @@ from handlers.activation import (
 from handlers.admin import admin_command, unadmin_command
 from handlers.activity_ranking import ranking_callback, top_command
 from utils.activity_stats import schedule_activity_resets, track_activity
+from utils.weekly_summary import count_new_members, schedule_weekly_summary
 from handlers.afk import brb_text_trigger, load_afk_cache, track_and_check_afk
 from handlers.economy import (
     baloncesto_command,
@@ -320,6 +321,7 @@ async def post_init(application: Application) -> None:
             name="broadcast_dispatch",
         )
     schedule_activity_resets(application)
+    schedule_weekly_summary(application)
     logger.info("Bot inicializado correctamente. Propietarios: %s", list(settings.owner_ids))
 
 
@@ -564,6 +566,13 @@ def build_application() -> Application:
     # Eventos de ingreso/salida de miembros (mensajes de servicio de Telegram)
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, on_new_members))
     application.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, on_left_member))
+
+    # --- Contador de miembros nuevos para el resumen semanal (domingos) ---
+    # Grupo aparte (6): no compite con on_join_cleanup (2) ni con la
+    # bienvenida (0), solo suma al contador de weekly_new_members.
+    application.add_handler(
+        MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, count_new_members), group=6
+    )
 
     # --- Auto-eliminar mensajes de servicio (grupo aparte para no pisar
     # los handlers de bienvenida/despedida, que publican el aviso propio) ---

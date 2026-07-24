@@ -14,6 +14,7 @@ from telegram.ext import ContextTypes
 
 from config import settings
 from database import Database
+from utils.activity_stats import get_activity_title
 from utils.formatting import error, escape_md, mention
 from utils.parsing import resolve_target
 from utils.permissions import check_bot_rights, check_executor_is_admin, get_member, is_owner
@@ -144,6 +145,15 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         f"📛 Username: {escape_md('@' + target_username) if target_username else 'No tiene'}",
         f"📌 Estado: {escape_md(status_text)}",
     ]
+
+    if chat.type in ("group", "supergroup"):
+        entry = await db.get_activity_entry(chat.id, target_id)
+        total_messages = entry.total_messages if entry else 0
+        streak_days = await db.get_activity_streak(chat.id, target_id)
+        lines.append(f"🎖 Insignia: {escape_md(get_activity_title(total_messages))}")
+        lines.append(f"💬 Mensajes en el grupo: {total_messages}")
+        lines.append(f"🔥 Racha de actividad: {streak_days} día\\(s\\)")
+
     await message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN_V2)
 
 

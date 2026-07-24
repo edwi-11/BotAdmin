@@ -295,6 +295,17 @@ CREATE TABLE IF NOT EXISTS activity_meta (
     key    TEXT PRIMARY KEY,
     value  TEXT NOT NULL
 );
+
+-- Contador de miembros nuevos por grupo desde el último reinicio semanal
+-- (se incrementa en main.py al detectar NEW_CHAT_MEMBERS y se reinicia
+-- junto con week_messages, ver Database.reset_weekly_activity). Usado
+-- por el resumen semanal automático de los domingos, ver
+-- utils/weekly_summary.py.
+CREATE TABLE IF NOT EXISTS weekly_new_members (
+    group_id    INTEGER PRIMARY KEY,
+    count       INTEGER NOT NULL DEFAULT 0,
+    updated_at  INTEGER NOT NULL
+);
 """
 
 # Columnas que se añadieron después de la primera versión del esquema.
@@ -383,6 +394,15 @@ _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         # 1 = ya le mandamos la bienvenida privada apenas mandó la
         # solicitud (para no repetírsela cuando entra de verdad).
         ("welcomed", "INTEGER NOT NULL DEFAULT 0"),
+    ],
+    "activity_stats": [
+        # --- Racha de actividad (días seguidos escribiendo en el grupo) ---
+        # streak_days: cuántos días seguidos lleva escribiendo al menos un
+        # mensaje por día. streak_last_day: último día ('YYYY-MM-DD') que
+        # ya se le contó, para no sumarle la racha dos veces el mismo día
+        # aunque mande mil mensajes (ver utils/activity_stats.py).
+        ("streak_days", "INTEGER NOT NULL DEFAULT 0"),
+        ("streak_last_day", "TEXT"),
     ],
 }
 
@@ -1468,6 +1488,21 @@ class Database:
         rows = await cursor.fetchall()
         return [_row_to_activity_entry(r) for r in rows]
 
+    async def get_activity_entry(self, chat_id: int, user_id: int) -> Optional[ActivityEntry]:
+        """Fila de actividad de un usuario puntual en un grupo (usado por
+        /info), sin tener que traer todo el ranking."""
+        cursor = await self.conn.execute(
+            """
+            SELECT user_id, username, first_name, last_name,
+                   total_messages, today_messages, week_messages, last_message_date
+            FROM activity_stats
+            WHERE chat_id = ? AND user_id = ?
+            """,
+            (chat_id, user_id),
+        )
+        row = await cursor.fetchone()
+        return _row_to_activity_entry(row) if row else None
+
     async def get_activity_group_totals(self, chat_id: int) -> tuple[int, int]:
         """(usuarios con actividad registrada, total de mensajes registrados) del grupo."""
         cursor = await self.conn.execute(
@@ -1485,8 +1520,79 @@ class Database:
 
     async def reset_weekly_activity(self) -> int:
         cursor = await self.conn.execute("UPDATE activity_stats SET week_messages = 0 WHERE week_messages != 0")
+        await self.conn.execute("UPDATE weekly_new_members SET count = 0, updated_at = ? WHERE count != 0", (int(time.time()),))
         await self.conn.commit()
         return cursor.rowcount
+
+    # ------------------------------------------------------------------ #
+    # Racha de actividad (días seguidos escribiendo), ver
+    # utils/activity_stats.py -> track_activity.
+    # ------------------------------------------------------------------ #
+    async def bump_activity_streak(
+        self, chat_id: int, user_id: int, today: str, yesterday: str
+    ) -> Optional[int]:
+        """Si hoy es la primera vez que este usuario escribe en este grupo,
+        actualiza su racha de días activos y devuelve el nuevo valor.
+        Devuelve None si hoy ya se le había contado (para no premiarlo dos
+        veces el mismo día). Asume que `record_message_activity` ya
+        insertó la fila antes de llamar a esto."""
+        cursor = await self.conn.execute(
+            "SELECT streak_days, streak_last_day FROM activity_stats WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        if row["streak_last_day"] == today:
+            return None  # ya se le contó hoy
+
+        new_streak = row["streak_days"] + 1 if row["streak_last_day"] == yesterday else 1
+        await self.conn.execute(
+            "UPDATE activity_stats SET streak_days = ?, streak_last_day = ? WHERE chat_id = ? AND user_id = ?",
+            (new_streak, today, chat_id, user_id),
+        )
+        await self.conn.commit()
+        return new_streak
+
+    async def get_activity_streak(self, chat_id: int, user_id: int) -> int:
+        cursor = await self.conn.execute(
+            "SELECT streak_days FROM activity_stats WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id),
+        )
+        row = await cursor.fetchone()
+        return int(row["streak_days"]) if row else 0
+
+    async def get_activity_week_total(self, chat_id: int) -> int:
+        cursor = await self.conn.execute(
+            "SELECT COALESCE(SUM(week_messages), 0) AS total FROM activity_stats WHERE chat_id = ?",
+            (chat_id,),
+        )
+        row = await cursor.fetchone()
+        return int(row["total"]) if row else 0
+
+    # ------------------------------------------------------------------ #
+    # Miembros nuevos por semana (resumen semanal, ver
+    # utils/weekly_summary.py).
+    # ------------------------------------------------------------------ #
+    async def increment_weekly_new_members(self, group_id: int) -> None:
+        await self.conn.execute(
+            """
+            INSERT INTO weekly_new_members (group_id, count, updated_at)
+            VALUES (?, 1, ?)
+            ON CONFLICT(group_id) DO UPDATE SET
+                count = count + 1,
+                updated_at = excluded.updated_at
+            """,
+            (group_id, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def get_weekly_new_members(self, group_id: int) -> int:
+        cursor = await self.conn.execute(
+            "SELECT count FROM weekly_new_members WHERE group_id = ?", (group_id,)
+        )
+        row = await cursor.fetchone()
+        return int(row["count"]) if row else 0
 
     async def get_meta(self, key: str) -> Optional[str]:
         cursor = await self.conn.execute("SELECT value FROM activity_meta WHERE key = ?", (key,))

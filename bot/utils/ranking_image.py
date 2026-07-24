@@ -33,6 +33,7 @@ from telegram import Bot, Chat
 from telegram.error import TelegramError
 
 from database import ActivityEntry, Database
+from utils.activity_stats import get_activity_title
 from utils.telegram_media import fetch_avatar, fetch_unicode_emoji_images
 
 logger = logging.getLogger(__name__)
@@ -589,7 +590,8 @@ def build_caption_text(period: str, entries: list[ActivityEntry], total_messages
     lines = [f"🏆 TOP ACTIVITY — {label}", ""]
     for i, entry in enumerate(entries, start=1):
         count_txt = f"{_count_for(entry, period):,}".replace(",", ".")
-        lines.append(f"{i}. {_caption_name(entry)} — {count_txt} mensajes")
+        title = get_activity_title(entry.total_messages)
+        lines.append(f"{i}. {_caption_name(entry)} ({title}) — {count_txt} mensajes")
     total_txt = f"{total_messages:,}".replace(",", ".")
     lines.append("")
     lines.append(f"💬 Total del grupo: {total_txt} mensajes")
