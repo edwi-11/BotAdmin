@@ -264,6 +264,37 @@ CREATE TABLE IF NOT EXISTS report_notifications (
     message_id  INTEGER NOT NULL,
     PRIMARY KEY (report_id, admin_id)
 );
+
+-- Estadísticas de actividad (mensajes) por grupo, usadas por /top (ver
+-- handlers/activity_ranking.py). today_messages/week_messages se
+-- reinician con un job programado (ver utils/activity_stats.py), no de
+-- forma perezosa por fila, para que el ranking sea correcto también
+-- para quienes no escribieron nada en el período nuevo.
+CREATE TABLE IF NOT EXISTS activity_stats (
+    chat_id            INTEGER NOT NULL,
+    user_id            INTEGER NOT NULL,
+    username           TEXT,
+    first_name         TEXT NOT NULL,
+    last_name          TEXT,
+    total_messages     INTEGER NOT NULL DEFAULT 0,
+    today_messages     INTEGER NOT NULL DEFAULT 0,
+    week_messages      INTEGER NOT NULL DEFAULT 0,
+    last_message_date  INTEGER NOT NULL DEFAULT 0,
+    updated_at         INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_activity_total ON activity_stats (chat_id, total_messages);
+CREATE INDEX IF NOT EXISTS idx_activity_today ON activity_stats (chat_id, today_messages);
+CREATE INDEX IF NOT EXISTS idx_activity_week  ON activity_stats (chat_id, week_messages);
+
+-- Pequeña tabla clave/valor para recordar cuándo se hizo el último
+-- reinicio diario/semanal de activity_stats (para "ponerse al día" si
+-- el bot estuvo apagado justo a la hora programada, ver
+-- utils/activity_stats.py -> schedule_activity_resets).
+CREATE TABLE IF NOT EXISTS activity_meta (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL
+);
 """
 
 # Columnas que se añadieron después de la primera versión del esquema.
@@ -464,6 +495,33 @@ def _row_to_economy(row: aiosqlite.Row) -> EconomyProfile:
         group_id=row["group_id"], user_id=row["user_id"], balance=row["balance"],
         bank=row["bank"], xp=row["xp"], job=row["job"], shield_until=row["shield_until"],
         daily_streak=row["daily_streak"], last_daily=row["last_daily"],
+    )
+
+
+@dataclass(slots=True)
+class ActivityEntry:
+    user_id: int
+    username: Optional[str]
+    first_name: str
+    last_name: Optional[str]
+    total_messages: int
+    today_messages: int
+    week_messages: int
+    last_message_date: int
+
+    @property
+    def display_name(self) -> str:
+        if self.last_name:
+            return f"{self.first_name} {self.last_name}"
+        return self.first_name
+
+
+def _row_to_activity_entry(row: aiosqlite.Row) -> ActivityEntry:
+    return ActivityEntry(
+        user_id=row["user_id"], username=row["username"], first_name=row["first_name"],
+        last_name=row["last_name"], total_messages=row["total_messages"],
+        today_messages=row["today_messages"], week_messages=row["week_messages"],
+        last_message_date=row["last_message_date"],
     )
 
 
@@ -1294,6 +1352,88 @@ class Database:
         )
         rows = await cursor.fetchall()
         return [_row_to_economy(r) for r in rows]
+
+    # ------------------------------------------------------------------ #
+    # Actividad de mensajes por grupo (/top, ver handlers/activity_ranking.py)
+    # ------------------------------------------------------------------ #
+    _ACTIVITY_PERIOD_COLUMNS = {"today": "today_messages", "week": "week_messages", "all": "total_messages"}
+
+    async def record_message_activity(
+        self, chat_id: int, user_id: int, username: Optional[str], first_name: str, last_name: Optional[str],
+    ) -> None:
+        """Registra un mensaje nuevo: crea la fila si no existía o suma 1 a
+        total/hoy/semana, y refresca el nombre/usuario por si cambiaron."""
+        now = int(time.time())
+        await self.conn.execute(
+            """
+            INSERT INTO activity_stats (
+                chat_id, user_id, username, first_name, last_name,
+                total_messages, today_messages, week_messages, last_message_date, updated_at
+            ) VALUES (?, ?, ?, ?, ?, 1, 1, 1, ?, ?)
+            ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                username = excluded.username,
+                first_name = excluded.first_name,
+                last_name = excluded.last_name,
+                total_messages = total_messages + 1,
+                today_messages = today_messages + 1,
+                week_messages = week_messages + 1,
+                last_message_date = excluded.last_message_date,
+                updated_at = excluded.updated_at
+            """,
+            (chat_id, user_id, username.lower() if username else None, first_name, last_name, now, now),
+        )
+        await self.conn.commit()
+
+    async def get_activity_ranking(self, chat_id: int, period: str, limit: int = 10) -> list[ActivityEntry]:
+        """Top `limit` usuarios del grupo para el período pedido
+        ('today' | 'week' | 'all'), de mayor a menor."""
+        column = self._ACTIVITY_PERIOD_COLUMNS.get(period, "total_messages")
+        cursor = await self.conn.execute(
+            f"""
+            SELECT user_id, username, first_name, last_name,
+                   total_messages, today_messages, week_messages, last_message_date
+            FROM activity_stats
+            WHERE chat_id = ? AND {column} > 0
+            ORDER BY {column} DESC, user_id ASC
+            LIMIT ?
+            """,
+            (chat_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [_row_to_activity_entry(r) for r in rows]
+
+    async def get_activity_group_totals(self, chat_id: int) -> tuple[int, int]:
+        """(usuarios con actividad registrada, total de mensajes registrados) del grupo."""
+        cursor = await self.conn.execute(
+            "SELECT COUNT(*) AS users, COALESCE(SUM(total_messages), 0) AS total "
+            "FROM activity_stats WHERE chat_id = ?",
+            (chat_id,),
+        )
+        row = await cursor.fetchone()
+        return int(row["users"]), int(row["total"])
+
+    async def reset_daily_activity(self) -> int:
+        cursor = await self.conn.execute("UPDATE activity_stats SET today_messages = 0 WHERE today_messages != 0")
+        await self.conn.commit()
+        return cursor.rowcount
+
+    async def reset_weekly_activity(self) -> int:
+        cursor = await self.conn.execute("UPDATE activity_stats SET week_messages = 0 WHERE week_messages != 0")
+        await self.conn.commit()
+        return cursor.rowcount
+
+    async def get_meta(self, key: str) -> Optional[str]:
+        cursor = await self.conn.execute("SELECT value FROM activity_meta WHERE key = ?", (key,))
+        row = await cursor.fetchone()
+        return row["value"] if row else None
+
+    async def set_meta(self, key: str, value: str) -> None:
+        await self.conn.execute(
+            "INSERT INTO activity_meta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+        await self.conn.commit()
 
     # -- Cooldowns de economía (juegos, trabajo, robo, etc.) --
     async def get_cooldown(self, group_id: int, user_id: int, action: str) -> int:
