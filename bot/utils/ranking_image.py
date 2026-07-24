@@ -21,10 +21,13 @@ import io
 import logging
 import math
 import time
+import unicodedata
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
+from fontTools.ttLib import TTFont
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 from telegram import Bot, Chat
 from telegram.error import TelegramError
@@ -137,9 +140,74 @@ def _horizontal_gradient(size: tuple[int, int], c1: tuple[int, int, int], c2: tu
     return grad.resize((w, h))
 
 
+@lru_cache(maxsize=None)
+def _font_cmap(font_path: str) -> frozenset[int]:
+    """Codepoints que la fuente realmente sabe dibujar, leídos de su tabla
+    `cmap`. No usamos `ImageFont.getmask().getbbox()` para esto porque el
+    glifo ".notdef" (el que se usa cuando falta un carácter) muchas veces
+    ES un cuadrito visible con bbox no vacío -- por eso salían los
+    cuadritos aunque el chequeo "tenga bbox" pareciera pasar."""
+    try:
+        tt = TTFont(font_path, lazy=True)
+        cmap = tt.getBestCmap() or {}
+        return frozenset(cmap.keys())
+    except Exception:
+        logger.warning("No se pudo leer la tabla cmap de %s", font_path)
+        return frozenset()
+
+
+def _has_glyph_cached(font: ImageFont.FreeTypeFont, ch: str) -> bool:
+    if ch.isspace():
+        return True
+    return ord(ch) in _font_cmap(font.path)
+
+
+# NFKC ya normaliza la mayoría de las "fuentes" unicode decorativas
+# (negrita, cursiva, gótica, ancho completo, círculos, etc.), pero el
+# estilo "small caps" (ᴀʙᴄᴅᴇ...), muy usado también para decorar nombres,
+# no tiene descomposición de compatibilidad. Se mapea a mano.
+_SMALLCAPS_MAP = str.maketrans(
+    "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀᴛᴜᴠᴡʏᴢ",
+    "ABCDEFGHIJKLMNOPQRTUVWYZ",
+)
+
+
+def _clean_text(text: str, font: ImageFont.FreeTypeFont) -> str:
+    """Normaliza un nombre para que nunca salga con 'cuadritos':
+
+    1) NFKC convierte letras de fuentes unicode 'estilizadas' (negrita,
+       cursiva, gótica, doble raya, ancho completo, etc. -- lo que suele
+       usar la gente para 'decorar' su nombre en Telegram) a su letra
+       latina normal equivalente, así se ven consistentes con el resto
+       del diseño en vez de con una tipografía random.
+    2) Se descartan marcas combinantes / caracteres de formato invisibles.
+    3) Se descarta cualquier carácter que la fuente del panel (Poppins)
+       no tenga en su tabla de glifos (emojis raros, otros alfabetos,
+       símbolos), que es justo lo que generaba los cuadritos.
+    """
+    if not text:
+        return ""
+    text = text.translate(_SMALLCAPS_MAP)
+    text = unicodedata.normalize("NFKC", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch) not in ("Mn", "Cf"))
+    text = "".join(ch for ch in text if _has_glyph_cached(font, ch))
+    return " ".join(text.split())
+
+
+def _display_text(entry: ActivityEntry, font: ImageFont.FreeTypeFont) -> str:
+    """Texto a mostrar en la fila: preferimos el @username (siempre en
+    ASCII simple, sin riesgo de fuentes raras); si el usuario no tiene
+    username, mostramos el nombre pero saneado con `_clean_text`."""
+    if entry.username:
+        return f"@{entry.username}"
+    cleaned = _clean_text(entry.display_name, font)
+    return cleaned or f"ID {entry.user_id}"
+
+
 def _initials(entry: ActivityEntry) -> str:
-    name = entry.display_name.strip()
-    return (name[0] if name else "?").upper()
+    base = entry.username or entry.display_name
+    base = _clean_text(base, _FONTS.initial).lstrip("@")
+    return (base[0] if base else "?").upper()
 
 
 def _draw_glow_blob(layer: Image.Image, cx: int, cy: int, r: int, color: tuple[int, int, int], alpha: int) -> None:
@@ -335,7 +403,7 @@ def draw_user(
     img.alpha_composite(av, (int(av_x), int(row_cy - AVATAR_SIZE / 2)))
 
     text_x = av_x + AVATAR_SIZE + 20
-    name = entry.display_name
+    name = _display_text(entry, _FONTS.name)
     max_name_w = int((x1 - x0) * 0.5)
     while draw.textbbox((0, 0), name, font=_FONTS.name)[2] > max_name_w and len(name) > 3:
         name = name[:-2] + "…"
