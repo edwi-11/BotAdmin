@@ -56,6 +56,26 @@ _JOINED_STATUSES = {
 
 _CALLBACK_PREFIX = "canalver:"
 
+# Permisos que definen a un admin "con todo" (cofundador), sin contar los
+# que solo aplican a canales (can_post_messages, can_edit_stories, etc.).
+_COFOUNDER_RIGHTS = (
+    "can_change_info",
+    "can_delete_messages",
+    "can_invite_users",
+    "can_restrict_members",
+    "can_pin_messages",
+    "can_promote_members",
+)
+
+# group_id -> lista de user_id de los cofundadores etiquetados en el
+# aviso de ese grupo (en memoria: solo se usa para saber a quién más se
+# le permite tocar "Ya me uní", no hace falta persistirlo).
+_COFOUNDERS_KEY = "channel_lock_cofounders"
+
+
+def _cofounders_map(context: ContextTypes.DEFAULT_TYPE) -> dict[int, list[int]]:
+    return context.application.bot_data.setdefault(_COFOUNDERS_KEY, {})
+
 
 def _keyboard(group_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -66,16 +86,20 @@ def _keyboard(group_id: int) -> InlineKeyboardMarkup:
     )
 
 
-async def _find_group_owner(bot, chat_id: int) -> Optional[ChatMember]:
+async def _fetch_admins(bot, chat_id: int) -> Optional[list[ChatMember]]:
     try:
-        admins = await bot.get_chat_administrators(chat_id)
+        return await bot.get_chat_administrators(chat_id)
     except TelegramError as exc:
         logger.warning("No se pudo obtener los administradores del grupo %s: %s", chat_id, exc)
         return None
-    for admin in admins:
-        if admin.status == ChatMemberStatus.OWNER:
-            return admin
-    return None
+
+
+def _is_cofounder(member: ChatMember) -> bool:
+    """Admin (no el dueño) con TODOS los permisos clave: lo tratamos como
+    'cofundador' del grupo."""
+    if member.status != ChatMemberStatus.ADMINISTRATOR:
+        return False
+    return all(getattr(member, right, False) for right in _COFOUNDER_RIGHTS)
 
 
 async def _is_member_of_channel(bot, user_id: int) -> Optional[bool]:
@@ -95,11 +119,14 @@ def _owner_mention(owner: User) -> str:
     return f'<a href="tg://user?id={owner.id}">{html.escape(owner.full_name)}</a>'
 
 
-def _notice_text(owner) -> str:
+def _notice_text(owner: User, cofounders: list[ChatMember]) -> str:
+    tags = [_owner_mention(owner)]
+    tags.extend(_owner_mention(admin.user) for admin in cofounders)
+    quienes = "dueño y cofundadores de este grupo" if cofounders else "dueño de este grupo"
     return (
-        f"📢 {_owner_mention(owner)}, dueño de este grupo:\n\n"
-        "Para seguir usando este bot necesitas unirte a nuestro canal de anuncios.\n"
-        "Únete tocando el botón de abajo y luego confirma con «✅ Ya me uní» para reactivar el bot."
+        f"📢 {', '.join(tags)}, {quienes}:\n\n"
+        "Para seguir usando este bot necesitan unirse a nuestro canal de anuncios.\n"
+        "Únanse tocando el botón de abajo y luego confirmen con «✅ Ya me uní» para reactivar el bot."
     )
 
 
@@ -129,12 +156,19 @@ async def canal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     error_count = 0
 
     for group_id, title in groups:
-        owner_member = await _find_group_owner(context.bot, group_id)
+        admins = await _fetch_admins(context.bot, group_id)
+        if admins is None:
+            error_count += 1
+            continue
+
+        owner_member = next((a for a in admins if a.status == ChatMemberStatus.OWNER), None)
         if owner_member is None:
             error_count += 1
             continue
 
         owner = owner_member.user
+        cofounders = [a for a in admins if _is_cofounder(a)]
+
         joined = await _is_member_of_channel(context.bot, owner.id)
         if joined is None:
             error_count += 1
@@ -143,12 +177,13 @@ async def canal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         if joined:
             already_ok_count += 1
             await db.unlock_group_channel(group_id)
+            _cofounders_map(context).pop(group_id, None)
             continue
 
         try:
             sent = await context.bot.send_message(
                 group_id,
-                _notice_text(owner),
+                _notice_text(owner, cofounders),
                 parse_mode="HTML",
                 reply_markup=_keyboard(group_id),
                 disable_web_page_preview=True,
@@ -159,6 +194,7 @@ async def canal_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             continue
 
         await db.lock_group_channel(group_id, title, owner.id, sent.message_id)
+        _cofounders_map(context)[group_id] = [a.user.id for a in cofounders]
         locked_count += 1
 
     await message.reply_text(
@@ -191,8 +227,12 @@ async def canal_verify_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("✅ Este grupo ya está activo.", show_alert=True)
         return
 
-    if stored_owner_id is not None and user.id != stored_owner_id and not is_owner(user.id):
-        await query.answer("🔒 Solo el dueño del grupo puede confirmar esto.", show_alert=True)
+    cofounder_ids = _cofounders_map(context).get(group_id, [])
+    allowed_ids = {stored_owner_id, *cofounder_ids} - {None}
+    if allowed_ids and user.id not in allowed_ids and not is_owner(user.id):
+        await query.answer(
+            "🔒 Solo el dueño o un cofundador del grupo puede confirmar esto.", show_alert=True
+        )
         return
 
     target_id = stored_owner_id if stored_owner_id is not None else user.id
@@ -204,6 +244,7 @@ async def canal_verify_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     await db.unlock_group_channel(group_id)
+    _cofounders_map(context).pop(group_id, None)
     try:
         await query.edit_message_text(
             "✅ ¡Gracias! El bot fue reactivado en este grupo.",
