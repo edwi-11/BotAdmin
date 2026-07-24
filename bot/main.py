@@ -43,6 +43,8 @@ from handlers.activation import (
     on_bot_membership_change,
 )
 from handlers.admin import admin_command, unadmin_command
+from handlers.activity_ranking import ranking_callback, top_command
+from utils.activity_stats import schedule_activity_resets, track_activity
 from handlers.afk import brb_text_trigger, load_afk_cache, track_and_check_afk
 from handlers.economy import (
     baloncesto_command,
@@ -199,6 +201,7 @@ BOT_COMMANDS = [
     BotCommand("tienda", "Ver la tienda de objetos"),
     BotCommand("comprar", "Comprar un objeto de la tienda"),
     BotCommand("ranking", "Ver el top de más ricos del grupo"),
+    BotCommand("top", "Ver el top 10 de más mensajes del grupo"),
 ]
 
 
@@ -315,6 +318,7 @@ async def post_init(application: Application) -> None:
             _broadcast_dispatch_job, interval=BROADCAST_POLL_SECONDS, first=BROADCAST_POLL_SECONDS,
             name="broadcast_dispatch",
         )
+    schedule_activity_resets(application)
     logger.info("Bot inicializado correctamente. Propietarios: %s", list(settings.owner_ids))
 
 
@@ -434,6 +438,14 @@ def build_application() -> Application:
     application.add_handler(
         MessageHandler(filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL, track_message), group=-4
     )
+
+    # --- Estadísticas de actividad para /top (ranking de mensajes) ---
+    # Grupo propio (-7): si compartiera el -4 con track_message, nunca se
+    # ejecutaría, porque dentro de un mismo grupo solo corre el primer
+    # handler cuyo filtro matchee, y ambos usan el mismo filtro.
+    application.add_handler(
+        MessageHandler(filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL, track_activity), group=-7
+    )
     application.add_handler(ChatMemberHandler(on_bot_membership_change, ChatMemberHandler.MY_CHAT_MEMBER))
     application.add_handler(CommandHandler("activar", activar_command))
     application.add_handler(CommandHandler("desactivar", desactivar_command))
@@ -526,6 +538,10 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("tienda", tienda_command))
     application.add_handler(CommandHandler("comprar", comprar_command))
     application.add_handler(CommandHandler("ranking", ranking_command))
+
+    # --- /top: ranking de mensajes (distinto del /ranking de monedas de arriba) ---
+    application.add_handler(CommandHandler("top", top_command))
+    application.add_handler(CallbackQueryHandler(ranking_callback, pattern=r"^ranking_(today|week|all)$"))
 
     # Router de mensajes libres (texto o media): editor de recurrentes,
     # wizard de palabras prohibidas, ediciones pendientes del menú y "brb".
