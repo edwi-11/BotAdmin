@@ -576,6 +576,32 @@ def _count_for(entry: ActivityEntry, period: str) -> int:
     return entry.total_messages
 
 
+def _caption_name(entry: ActivityEntry) -> str:
+    """Igual que en la imagen: preferimos el @username; si no tiene, el
+    nombre para mostrar."""
+    return f"@{entry.username}" if entry.username else entry.display_name
+
+
+def build_caption_text(period: str, entries: list[ActivityEntry], total_messages: int) -> str:
+    """Texto plano con el mismo contenido que la imagen (los @ y su total
+    de mensajes), para mandarlo como caption debajo de la foto de /top."""
+    label = PERIOD_LABELS.get(period, "Siempre")
+    lines = [f"🏆 TOP ACTIVITY — {label}", ""]
+    for i, entry in enumerate(entries, start=1):
+        count_txt = f"{_count_for(entry, period):,}".replace(",", ".")
+        lines.append(f"{i}. {_caption_name(entry)} — {count_txt} mensajes")
+    total_txt = f"{total_messages:,}".replace(",", ".")
+    lines.append("")
+    lines.append(f"💬 Total del grupo: {total_txt} mensajes")
+    return "\n".join(lines)
+
+
+@dataclass(slots=True)
+class RankingResult:
+    photo: io.BytesIO
+    caption: str
+
+
 # --------------------------------------------------------------------- #
 # Orquestador ASYNC: junta datos de Telegram/DB y despacha el dibujo
 # --------------------------------------------------------------------- #
@@ -583,8 +609,10 @@ _MEDAL_EMOJIS = ["🥇", "🥈", "🥉"]
 _FOOTER_EMOJIS = {"members": "👥", "messages": "💬", "calendar": "📅", "robot": "🤖"}
 
 
-async def build_ranking_image(bot: Bot, db: Database, chat: Chat, period: str) -> Optional[io.BytesIO]:
-    """Arma la imagen del ranking para `period` ('today' | 'week' | 'all').
+async def build_ranking_image(bot: Bot, db: Database, chat: Chat, period: str) -> Optional[RankingResult]:
+    """Arma la imagen del ranking para `period` ('today' | 'week' | 'all'),
+    junto con el texto plano (mismo contenido: los @ y su total de
+    mensajes) para mandar como caption debajo de la foto.
     Devuelve None si todavía no hay ningún mensaje registrado en el grupo
     para ese período (el handler decide qué mostrar en ese caso)."""
     entries = await db.get_activity_ranking(chat.id, period, limit=ROW_COUNT)
@@ -621,4 +649,6 @@ async def build_ranking_image(bot: Bot, db: Database, chat: Chat, period: str) -
     image.save(buf, format="PNG", optimize=True)
     buf.seek(0)
     buf.name = f"ranking_{period}.png"
-    return buf
+
+    caption = build_caption_text(period, entries, total_messages)
+    return RankingResult(photo=buf, caption=caption)

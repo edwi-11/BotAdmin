@@ -57,12 +57,12 @@ async def top_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     db = _get_db(context)
     period = "all"
-    photo = await build_ranking_image(context.bot, db, chat, period)
-    if photo is None:
+    result = await build_ranking_image(context.bot, db, chat, period)
+    if result is None:
         await message.reply_text(_NO_DATA_TEXT[period])
         return
 
-    await message.reply_photo(photo=photo, reply_markup=_keyboard(period))
+    await message.reply_photo(photo=result.photo, caption=result.caption, reply_markup=_keyboard(period))
 
 
 async def ranking_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -74,14 +74,14 @@ async def ranking_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     db = _get_db(context)
-    photo = await build_ranking_image(context.bot, db, chat, period)
-    if photo is None:
+    result = await build_ranking_image(context.bot, db, chat, period)
+    if result is None:
         await query.answer(_NO_DATA_TEXT[period], show_alert=True)
         return
 
     try:
         await query.edit_message_media(
-            media=InputMediaPhoto(photo, filename=f"ranking_{period}.png"),
+            media=InputMediaPhoto(result.photo, filename=f"ranking_{period}.png", caption=result.caption),
             reply_markup=_keyboard(period),
         )
     except BadRequest as exc:

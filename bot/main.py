@@ -66,6 +66,7 @@ from handlers.economy import (
     tragamonedas_command,
     transferir_command,
 )
+from handlers.channel_lock import canal_command, canal_verify_callback, channel_gate
 from handlers.captcha import (
     captcha_gatekeeper,
     captcha_menu_callback,
@@ -409,6 +410,17 @@ def build_application() -> Application:
         .post_shutdown(post_shutdown)
         .build()
     )
+
+    # --- Bloqueo por canal (/canal) --- Máxima prioridad de TODAS (grupo
+    # -20): si el grupo está bloqueado porque su dueño todavía no se unió
+    # al canal de anuncios, esto corta el update acá mismo, antes que el
+    # captcha, la activación, el tracking de actividad o cualquier otra
+    # cosa. El propietario del bot nunca queda bloqueado.
+    application.add_handler(
+        MessageHandler(filters.ChatType.GROUPS, channel_gate), group=-20
+    )
+    application.add_handler(CommandHandler("canal", canal_command))
+    application.add_handler(CallbackQueryHandler(canal_verify_callback, pattern=r"^canalver:"))
 
     # --- Sistema de activación de grupos (solo el owner puede activar) ---
     # Debe registrarse ANTES (grupo -3) que cualquier otro handler de

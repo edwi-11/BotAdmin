@@ -345,6 +345,18 @@ _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         # Grupo "activado" por el propietario mediante /activar. Mientras
         # esté en 0, el bot no responde a ningún comando en ese grupo.
         ("activated", "INTEGER NOT NULL DEFAULT 0"),
+        # --- Bloqueo por canal (/canal, ver handlers/channel_lock.py) ---
+        # Mientras channel_locked esté en 1, el bot no responde a NADA en
+        # ese grupo (excepto al propietario del bot) hasta que el dueño
+        # del grupo confirme que se unió al canal de anuncios.
+        ("channel_locked", "INTEGER NOT NULL DEFAULT 0"),
+        # ID del dueño del grupo detectado al momento de bloquearlo (para
+        # verificar su membresía al canal y para saber quién puede tocar
+        # el botón "Ya me uní").
+        ("channel_owner_id", "INTEGER"),
+        # message_id del aviso mandado en el grupo, para poder editarlo
+        # cuando se confirme la membresía.
+        ("channel_notice_msg_id", "INTEGER"),
     ],
     "users": [
         # 1 = le podemos mandar mensajes privados a este usuario (ya sea
@@ -998,6 +1010,60 @@ class Database:
                 updated_at = excluded.updated_at
             """,
             (group_id, title, int(activated), int(time.time())),
+        )
+        await self.conn.commit()
+
+    # ------------------------------------------------------------------ #
+    # Bloqueo por canal (/canal, ver handlers/channel_lock.py)
+    # ------------------------------------------------------------------ #
+    async def is_channel_locked(self, group_id: int) -> bool:
+        cursor = await self.conn.execute(
+            "SELECT channel_locked FROM known_groups WHERE group_id = ?", (group_id,)
+        )
+        row = await cursor.fetchone()
+        return bool(row["channel_locked"]) if row else False
+
+    async def get_channel_lock(self, group_id: int) -> tuple[bool, Optional[int], Optional[int]]:
+        """Devuelve (locked, owner_id, notice_message_id) para ese grupo."""
+        cursor = await self.conn.execute(
+            "SELECT channel_locked, channel_owner_id, channel_notice_msg_id "
+            "FROM known_groups WHERE group_id = ?",
+            (group_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return False, None, None
+        return bool(row["channel_locked"]), row["channel_owner_id"], row["channel_notice_msg_id"]
+
+    async def lock_group_channel(
+        self, group_id: int, title: Optional[str], owner_id: int, notice_message_id: int
+    ) -> None:
+        """Bloquea el grupo hasta que su dueño confirme que se unió al canal.
+        Usa upsert por si el grupo aún no tenía fila en known_groups."""
+        await self.conn.execute(
+            """
+            INSERT INTO known_groups
+                (group_id, title, channel_locked, channel_owner_id, channel_notice_msg_id, updated_at)
+            VALUES (?, ?, 1, ?, ?, ?)
+            ON CONFLICT(group_id) DO UPDATE SET
+                channel_locked = 1,
+                channel_owner_id = excluded.channel_owner_id,
+                channel_notice_msg_id = excluded.channel_notice_msg_id,
+                title = COALESCE(excluded.title, known_groups.title),
+                updated_at = excluded.updated_at
+            """,
+            (group_id, title, owner_id, notice_message_id, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def unlock_group_channel(self, group_id: int) -> None:
+        await self.conn.execute(
+            """
+            UPDATE known_groups
+            SET channel_locked = 0, channel_owner_id = NULL, channel_notice_msg_id = NULL, updated_at = ?
+            WHERE group_id = ?
+            """,
+            (int(time.time()), group_id),
         )
         await self.conn.commit()
 
