@@ -381,6 +381,13 @@ _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("streak_days", "INTEGER NOT NULL DEFAULT 0"),
         ("streak_last_day", "TEXT"),
     ],
+    "captcha_state": [
+        # message_id del aviso público que se manda en el GRUPO cuando no
+        # se le pudo mandar el DM (ver captcha_gatekeeper). Se guarda para
+        # poder borrarlo apenas se resuelva la verificación (aprobada o
+        # rechazada) y así no se acumulen menciones viejas en el chat.
+        ("notice_message_id", "INTEGER"),
+    ],
 }
 
 
@@ -450,6 +457,7 @@ class CaptchaState:
     age: Optional[int]
     created_at: int
     resolved_at: Optional[int]
+    notice_message_id: Optional[int] = None
 
 
 def _row_to_captcha_state(row: aiosqlite.Row) -> CaptchaState:
@@ -457,6 +465,7 @@ def _row_to_captcha_state(row: aiosqlite.Row) -> CaptchaState:
         group_id=row["group_id"], user_id=row["user_id"], status=row["status"],
         user_name=row["user_name"], username=row["username"], group_title=row["group_title"],
         age=row["age"], created_at=row["created_at"], resolved_at=row["resolved_at"],
+        notice_message_id=row["notice_message_id"],
     )
 
 
@@ -1758,6 +1767,16 @@ class Database:
             ON CONFLICT(group_id, user_id) DO NOTHING
             """,
             (group_id, user_id, user_name, username, group_title, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def set_captcha_notice(self, group_id: int, user_id: int, message_id: int) -> None:
+        """Guarda el message_id del aviso público mandado en el GRUPO (cuando
+        no se le pudo mandar el DM), para poder borrarlo apenas se resuelva
+        la verificación."""
+        await self.conn.execute(
+            "UPDATE captcha_state SET notice_message_id = ? WHERE group_id = ? AND user_id = ?",
+            (message_id, group_id, user_id),
         )
         await self.conn.commit()
 

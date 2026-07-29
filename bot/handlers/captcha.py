@@ -407,7 +407,7 @@ async def captcha_gatekeeper(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 [[InlineKeyboardButton("✉️ Iniciar chat con el bot", url=f"https://t.me/{bot_username}?start=1")]]
             )
         try:
-            await context.bot.send_message(
+            sent_notice = await context.bot.send_message(
                 chat.id,
                 f'🔞 <a href="tg://user?id={user.id}">{user.first_name}</a>, tu mensaje fue eliminado. '
                 "Necesito verificar tu edad por privado antes de que puedas escribir acá — "
@@ -415,6 +415,10 @@ async def captcha_gatekeeper(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 parse_mode=ParseMode.HTML,
                 reply_markup=markup,
             )
+            # Lo guardamos para poder borrarlo apenas se resuelva la
+            # verificación (aprobada o rechazada) y que no quede
+            # acumulándose en el chat.
+            await db.set_captcha_notice(chat.id, user.id, sent_notice.message_id)
         except TelegramError as exc:
             logger.warning("No pude avisar en %s que el captcha por privado falló: %s", chat.id, exc)
 
@@ -432,6 +436,20 @@ async def captcha_gatekeeper(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # --------------------------------------------------------------------- #
 # Respuesta de edad por privado
 # --------------------------------------------------------------------- #
+async def _delete_captcha_notice(context: ContextTypes.DEFAULT_TYPE, pending: CaptchaState) -> None:
+    """Borra el aviso público que se mandó en el grupo (cuando no se pudo
+    mandar el DM), si existe, ahora que la verificación ya se resolvió."""
+    if not pending.notice_message_id:
+        return
+    try:
+        await context.bot.delete_message(pending.group_id, pending.notice_message_id)
+    except TelegramError as exc:
+        logger.info(
+            "No pude borrar el aviso de captcha (mensaje %s en %s): %s",
+            pending.notice_message_id, pending.group_id, exc,
+        )
+
+
 async def try_consume_captcha_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     chat = update.effective_chat
     message = update.effective_message
@@ -464,6 +482,7 @@ async def try_consume_captcha_answer(update: Update, context: ContextTypes.DEFAU
 
     if allowed:
         await db.resolve_captcha(pending.group_id, user.id, "passed", age)
+        await _delete_captcha_notice(context, pending)
         try:
             chat_full = await context.bot.get_chat(pending.group_id)
             default_perms = chat_full.permissions or ChatPermissions(
@@ -485,6 +504,7 @@ async def try_consume_captcha_answer(update: Update, context: ContextTypes.DEFAU
 
     # Edad fuera del rango permitido.
     await db.resolve_captcha(pending.group_id, user.id, "rejected", age)
+    await _delete_captcha_notice(context, pending)
     action = settings.captcha_action  # mute | ban
     action_text = "Silenciado permanentemente"
     if action == "ban":

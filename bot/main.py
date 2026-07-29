@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 from telegram import BotCommand, Update
-from telegram.error import TelegramError
+from telegram.error import Forbidden, TelegramError
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -257,14 +257,25 @@ async def _broadcast_dispatch_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                     if reused:
                         current_file_ref = reused
                         is_local = False
-            except TelegramError as exc:
+            except Forbidden:
+                # Bloqueo real: nos bloqueó, nunca abrió chat, o se borró la
+                # cuenta. Recién acá dejamos de intentar mandarle privados
+                # hasta que vuelva a hacer /start.
                 failed_count += 1
                 if is_users:
-                    # Nos bloqueó o nunca nos escribió: dejamos de intentar
-                    # mandarle privados hasta que vuelva a hacer /start.
                     await db.set_dm_ok(recipient_id, False)
                 logger.warning(
-                    "No se pudo enviar el anuncio #%s a %s %s: %s",
+                    "El usuario/grupo %s bloqueó al bot o no es accesible (anuncio #%s).",
+                    recipient_id, broadcast.id,
+                )
+            except TelegramError as exc:
+                # Cualquier otro error de Telegram (rate limit, timeout,
+                # mensaje mal formado, red, etc.): NO es evidencia de que
+                # el usuario bloqueó al bot, así que no lo sacamos de la
+                # lista de destinatarios.
+                failed_count += 1
+                logger.warning(
+                    "No se pudo enviar el anuncio #%s a %s %s (no se lo saca de la lista): %s",
                     broadcast.id, "usuario" if is_users else "grupo", recipient_id, exc,
                 )
             except FileNotFoundError as exc:
