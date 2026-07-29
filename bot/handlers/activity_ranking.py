@@ -6,9 +6,9 @@ botones [ Hoy ] [ Semana ] [ Siempre ] que EDITAN esa misma imagen
 (callback_data: ranking_today / ranking_week / ranking_all), sin mandar
 mensajes nuevos.
 
-Nota de nombre: el bot ya tenía un comando /ranking (top de monedas,
-ver handlers/economy.py). Para no romper esa función existente, este
-ranking de actividad se expone como /top.
+Nota de nombre: se expone como /top (el nombre /ranking quedó libre tras
+quitar el sistema de economía, pero se mantiene /top para no romper el
+uso actual).
 
 La actividad en sí (contar los mensajes) se registra en
 utils/activity_stats.py, no acá.

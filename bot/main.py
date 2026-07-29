@@ -47,26 +47,6 @@ from handlers.activity_ranking import ranking_callback, top_command
 from utils.activity_stats import schedule_activity_resets, track_activity
 from utils.weekly_summary import count_new_members, schedule_weekly_summary
 from handlers.afk import brb_text_trigger, load_afk_cache, track_and_check_afk
-from handlers.economy import (
-    baloncesto_command,
-    bolos_command,
-    cobrar_command,
-    comprar_command,
-    dardos_command,
-    depositar_command,
-    diario_command,
-    futbol_command,
-    ranking_command,
-    renunciar_command,
-    retirar_command,
-    robar_command,
-    saldo_command,
-    tienda_command,
-    trabajo_command,
-    trabajos_command,
-    tragamonedas_command,
-    transferir_command,
-)
 from handlers.channel_lock import canal_command, canal_verify_callback, channel_gate
 from handlers.captcha import (
     captcha_gatekeeper,
@@ -532,28 +512,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("unfree", unfree_command))
     application.add_handler(CommandHandler("freelist", freelist_command))
 
-    # --- Economía: juegos, trabajos, robo, banco, tienda, ranking ---
-    application.add_handler(CommandHandler("saldo", saldo_command))
-    application.add_handler(CommandHandler("perfil", saldo_command))
-    application.add_handler(CommandHandler("diario", diario_command))
-    application.add_handler(CommandHandler("baloncesto", baloncesto_command))
-    application.add_handler(CommandHandler("futbol", futbol_command))
-    application.add_handler(CommandHandler("dardos", dardos_command))
-    application.add_handler(CommandHandler("bolos", bolos_command))
-    application.add_handler(CommandHandler("tragamonedas", tragamonedas_command))
-    application.add_handler(CommandHandler("trabajos", trabajos_command))
-    application.add_handler(CommandHandler("trabajo", trabajo_command))
-    application.add_handler(CommandHandler("renunciar", renunciar_command))
-    application.add_handler(CommandHandler("cobrar", cobrar_command))
-    application.add_handler(CommandHandler("robar", robar_command))
-    application.add_handler(CommandHandler("transferir", transferir_command))
-    application.add_handler(CommandHandler("depositar", depositar_command))
-    application.add_handler(CommandHandler("retirar", retirar_command))
-    application.add_handler(CommandHandler("tienda", tienda_command))
-    application.add_handler(CommandHandler("comprar", comprar_command))
-    application.add_handler(CommandHandler("ranking", ranking_command))
-
-    # --- /top: ranking de mensajes (distinto del /ranking de monedas de arriba) ---
+    # --- /top: ranking de mensajes ---
     application.add_handler(CommandHandler("top", top_command))
     application.add_handler(CallbackQueryHandler(ranking_callback, pattern=r"^ranking_(today|week|all)$"))
 
