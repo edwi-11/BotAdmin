@@ -24,6 +24,7 @@ from telegram.error import Forbidden, TelegramError
 from telegram.ext import ContextTypes
 
 from database import Database
+from utils.groups import get_verified_groups
 from utils.permissions import is_owner
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ async def grupos_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     db: Database = context.application.bot_data["db"]
-    groups = await db.get_known_groups()  # list[tuple[group_id, title]]
+    groups = await get_verified_groups(context.bot, db)  # list[tuple[group_id, title]]
 
     if not groups:
         await message.reply_text("No tengo registrado ningún grupo todavía.")

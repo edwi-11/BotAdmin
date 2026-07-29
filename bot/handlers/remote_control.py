@@ -40,6 +40,7 @@ from telegram.ext import ApplicationHandlerStop, ContextTypes
 from database import Database
 from utils.callbacks import safe_callback
 from utils.formatting import error, success
+from utils.groups import get_verified_groups
 from utils.permissions import is_owner
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,7 @@ async def owner_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     db: Database = context.application.bot_data["db"]
-    groups = await db.get_known_groups()
+    groups = await get_verified_groups(context.bot, db)
     if not groups:
         await message.reply_text("No tengo registrado ningún grupo todavía.")
         return

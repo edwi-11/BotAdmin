@@ -33,6 +33,7 @@ from handlers.recurring import MEDIA_LABELS, _extract_content
 from utils.callbacks import safe_callback
 from utils.entities import buttons_to_json, describe_buttons, json_to_buttons, parse_buttons_text
 from utils.formatting import escape_md
+from utils.groups import get_verified_groups
 from utils.permissions import is_chat_admin, is_owner
 
 logger = logging.getLogger(__name__)
@@ -77,7 +78,10 @@ async def _user_can_manage(context: ContextTypes.DEFAULT_TYPE, group_id: int, us
 
 
 async def _admin_groups(context: ContextTypes.DEFAULT_TYPE, db: Database, user_id: int) -> list[tuple[int, str]]:
-    groups = await db.get_known_groups()
+    # Verificado contra Telegram de verdad (no la tabla cruda): así los
+    # grupos donde ya no está el bot (lo sacaron, se borraron, migraron a
+    # supergrupo) no aparecen, y de paso se limpian solos de la base.
+    groups = await get_verified_groups(context.bot, db)
     allowed: list[tuple[int, str]] = []
     owner = is_owner(user_id)
     for group_id, title in groups:

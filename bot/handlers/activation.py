@@ -100,10 +100,23 @@ async def on_bot_membership_change(update: Update, context: ContextTypes.DEFAULT
     just_joined = old_status in (ChatMemberStatus.LEFT, ChatMemberStatus.BANNED) and new_status in (
         ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR,
     )
+    just_left = old_status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR) and new_status in (
+        ChatMemberStatus.LEFT, ChatMemberStatus.BANNED,
+    )
+
+    db: Database = context.application.bot_data["db"]
+
+    if just_left:
+        # Lo sacaron del grupo (o lo banearon): lo borramos de known_groups
+        # de inmediato para que no quede como fantasma en /menu, /owner y
+        # /grupos hasta la próxima limpieza automática.
+        await db.remove_group(chat.id)
+        logger.info("Bot removido de %s (%s), grupo eliminado de known_groups", chat.id, chat.title)
+        return
+
     if not just_joined:
         return
 
-    db: Database = context.application.bot_data["db"]
     await db.upsert_group(chat.id, chat.title)
     if not await db.is_group_activated(chat.id):
         try:

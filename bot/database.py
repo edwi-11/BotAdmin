@@ -1002,6 +1002,12 @@ class Database:
         rows = await cursor.fetchall()
         return [(row["group_id"], row["title"] or str(row["group_id"])) for row in rows]
 
+    async def remove_group(self, group_id: int) -> None:
+        """Saca un grupo de known_groups (el bot ya no está ahí: lo sacaron,
+        borraron el grupo, o migró a supergrupo y quedó un id viejo)."""
+        await self.conn.execute("DELETE FROM known_groups WHERE group_id = ?", (group_id,))
+        await self.conn.commit()
+
     async def get_group_title(self, group_id: int) -> Optional[str]:
         cursor = await self.conn.execute(
             "SELECT title FROM known_groups WHERE group_id = ?", (group_id,)
