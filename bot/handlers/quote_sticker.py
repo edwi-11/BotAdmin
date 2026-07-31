@@ -58,9 +58,11 @@ import logging
 import random
 import unicodedata
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
+from fontTools.ttLib import TTFont
 from PIL import Image, ImageDraw, ImageFont
 from telegram import Message, MessageEntity, Update
 from telegram.error import TelegramError
@@ -166,11 +168,54 @@ def _load_color_emoji_font() -> Optional[ImageFont.FreeTypeFont]:
 
 
 # --------------------------------------------------------------------- #
-# Saneo de texto — a diferencia de la versión anterior, ahora se preserva
-# el texto tal cual llega (mayúsculas/minúsculas, tipografías Unicode,
-# espacios invisibles, emojis, RTL, CJK...). Solo se descartan caracteres
-# que directamente romperían el render: control C0 (salvo salto de línea)
-# y sustitutos UTF-16 sueltos (inválidos por sí solos en un str de Python).
+# Glifos realmente soportados por la fuente empaquetada (mismo enfoque que
+# utils/ranking_image.py): se lee la tabla `cmap` real de la fuente en vez
+# de usar ImageFont.getmask().getbbox(), porque el glifo ".notdef" (el
+# "cuadrito" □ que se dibuja cuando falta un carácter) muchas veces SÍ
+# tiene un bbox no vacío, así que ese chequeo no detecta el problema.
+# --------------------------------------------------------------------- #
+@lru_cache(maxsize=None)
+def _font_cmap(font_path: str) -> frozenset[int]:
+    try:
+        tt = TTFont(font_path, lazy=True)
+        cmap = tt.getBestCmap() or {}
+        return frozenset(cmap.keys())
+    except Exception:  # noqa: BLE001
+        logger.warning("No se pudo leer la tabla cmap de %s", font_path)
+        return frozenset()
+
+
+def _regular_font_cmap() -> frozenset[int]:
+    """Cmap de la fuente "regular" empaquetada/del sistema (la misma
+    familia tipográfica que usan name_font/text_font/etc., solo cambia
+    el tamaño, así que su cobertura de caracteres es la misma)."""
+    for path in _REGULAR_FONT_PATHS:
+        if Path(path).is_file():
+            return _font_cmap(path)
+    return frozenset()
+
+
+# NFKC ya normaliza la mayoría de las "fuentes" unicode decorativas
+# (negrita, cursiva, gótica, ancho completo, círculos, etc.), pero el
+# estilo "small caps" (ᴀʙᴄᴅᴇ...), muy usado también para decorar nombres,
+# no tiene descomposición de compatibilidad. Se mapea a mano.
+_SMALLCAPS_MAP = str.maketrans(
+    "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀᴛᴜᴠᴡʏᴢ",
+    "ABCDEFGHIJKLMNOPQRTUVWYZ",
+)
+
+
+# --------------------------------------------------------------------- #
+# Saneo de texto — se preserva el texto tal cual llega (mayúsculas/
+# minúsculas, espacios invisibles, emojis, RTL, CJK...) siempre que la
+# fuente lo pueda dibujar. Se descartan caracteres de control C0 (salvo
+# salto de línea/tab) y sustitutos UTF-16 sueltos (inválidos por sí solos
+# en un str de Python), se normalizan tipografías Unicode "decoradas" a su
+# forma normal equivalente (ej. 𝓔𝓭𝔀𝓲𝓷 -> Edwin, Ⓔⓝⓒⓘⓞ -> Encio, sᴛᴠᴇ -> STVE)
+# y, si aun así queda algún carácter que la fuente no sepa dibujar (otro
+# alfabeto o símbolo que ni la fuente empaquetada ni la del sistema
+# cubran), se descarta puntualmente ese carácter: es preferible perder un
+# carácter aislado a mostrar un cuadrito "□" (tofu) roto en el sticker.
 # --------------------------------------------------------------------- #
 def _sanitize_text(text: str) -> str:
     cleaned = []
@@ -181,7 +226,35 @@ def _sanitize_text(text: str) -> str:
         if cat == "Cc" and ch not in ("\n", "\t"):
             continue
         cleaned.append(ch)
-    return "".join(cleaned).strip("\n").strip()
+    result = "".join(cleaned).strip("\n").strip()
+
+    result = result.translate(_SMALLCAPS_MAP)
+    result = unicodedata.normalize("NFKC", result)
+
+    cmap = _regular_font_cmap()
+    if cmap:
+        result = "".join(ch for ch in result if _keep_regardless_of_font(ch) or ord(ch) in cmap)
+
+    return result
+
+
+def _keep_regardless_of_font(ch: str) -> bool:
+    """Caracteres que el filtro de glifos de arriba NUNCA debe descartar,
+    aunque `ch` no esté en la tabla `cmap` de la fuente de texto: los
+    emojis unicode (incluidos los que actúan como "placeholder" de un
+    emoji premium) no se dibujan con esa fuente — se resuelven aparte,
+    como imagen descargada o, si eso falla, con la fuente de emoji a
+    color del sistema (ver _draw_rich_text) — así que borrarlos acá
+    los haría desaparecer del todo en vez de solo evitar el tofu."""
+    if ch.isspace():
+        return True
+    code = ord(ch)
+    return (
+        _is_emoji_codepoint(code)
+        or code in _VARIATION_SELECTORS
+        or _REGIONAL_INDICATOR[0] <= code <= _REGIONAL_INDICATOR[1]
+        or _SKIN_TONES[0] <= code <= _SKIN_TONES[1]
+    )
 
 
 # --------------------------------------------------------------------- #
