@@ -11,10 +11,11 @@ Uso:
     /q random                   -> color aleatorio
     /q i / img / p / png        -> envía como imagen (foto) en vez de sticker
     /q r                        -> si el mensaje respondido a su vez respondía
-                                    a otro mensaje, ese mensaje se muestra
-                                    arriba, en una tarjeta de respuesta anidada
-                                    (igual que la burbuja de "responder" de
-                                    Telegram).
+                                    a otro mensaje, ese mensaje "padre" se
+                                    agrega como una burbuja completa más
+                                    (nombre, texto y adjuntos) arriba de la
+                                    burbuja principal, mostrando ambos
+                                    mensajes dentro del mismo sticker.
     /q 1 / /q 2 / /q 3 ...      -> además del mensaje respondido, muestra los
                                     N mensajes anteriores a él en el chat, en
                                     orden cronológico (conversación).
@@ -29,7 +30,17 @@ Qué se dibuja además del texto (según el tipo de mensaje citado):
     contacto                                 -> tarjeta con nombre/teléfono
     reenviado                                -> insignia "↪ Reenviado"
     emojis premium (custom_emoji)            -> se descargan y se dibujan
-                                                 tal cual (si son estáticos)
+                                                 tal cual (si son estáticos);
+                                                 si no se pudieron descargar,
+                                                 se dibuja el emoji unicode
+                                                 equivalente (el que Telegram
+                                                 manda como respaldo en el
+                                                 propio texto), y si tampoco
+                                                 hay forma de dibujarlo, se
+                                                 omite ESE emoji puntual —
+                                                 nunca se muestra un cuadrito
+                                                 "□" roto. Esto también aplica
+                                                 a nombres con emoji premium.
 
 Limitaciones que vienen de la Bot API de Telegram y no se pueden evitar:
     - Stickers/GIFs o emojis premium ANIMADOS (.tgs / Lottie) no se pueden
@@ -566,21 +577,30 @@ def _draw_rich_text(
             pos += len(run_text)
             continue
 
-        # 2) Emoji(s) unicode normales: un cluster (un emoji visual) a la vez.
+        # 2) Emoji(s) unicode normales (incluye el placeholder de un emoji
+        #    premium cuando no se pudo descargar su imagen — ver punto 1):
+        #    un cluster (un emoji visual) a la vez.
         for cluster in _emoji_clusters(run_text):
             img = unicode_images.get(cluster)
             if img is not None:
                 paste = img.convert("RGBA").resize((font_size, font_size), Image.LANCZOS)
                 canvas.paste(paste, (int(x), int(y)), paste)
                 x += font_size
-            elif emoji_font is not None:
+                continue
+            if emoji_font is not None:
                 try:
                     draw.text((x, y), cluster, font=emoji_font, embedded_color=True)
                     x += draw.textlength(cluster, font=emoji_font)
+                    continue
                 except OSError:
-                    draw.text((x, y), cluster, font=font, fill=fill)
-                    x += draw.textlength(cluster, font=font)
-            else:
+                    pass
+            # Última opción: dibujar con la fuente de texto normal, pero
+            # SOLO si de verdad tiene el glifo para ese carácter — si no,
+            # se omite ese emoji puntual (mejor perder un emoji aislado
+            # que mostrar un cuadrito "□" roto), y el resto del nombre o
+            # mensaje sigue intacto.
+            cmap = _regular_font_cmap()
+            if not cmap or all(ord(c) in cmap for c in cluster if not c.isspace()):
                 draw.text((x, y), cluster, font=font, fill=fill)
                 x += draw.textlength(cluster, font=font)
         pos += len(run_text)
@@ -1082,20 +1102,20 @@ async def q_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             text = (stub.text or "").strip()
             if text:
                 rows.append(_Row(name=_sanitize_text(stub.name) or "Usuario", text=_sanitize_text(text), seed=stub.user_id))
+
+    # /q r: si el mensaje citado a su vez respondía a otro mensaje, ese
+    # mensaje "padre" se agrega como una burbuja completa más (con su
+    # propio nombre, texto y adjuntos si tiene, igual que el resto de la
+    # conversación) justo antes de la burbuja principal, para que el
+    # sticker muestre ambos mensajes con el mismo estilo visual del bot.
+    if reply_mode and target.reply_to_message:
+        parent_row = await _row_from_message(bot, target.reply_to_message, with_avatar=False, with_media=True)
+        if parent_row.text or parent_row.attachment is not None or parent_row.media is not None:
+            rows.append(parent_row)
+
     rows.append(main_row)
 
-    reply_preview: Optional[_ReplyPreview] = None
-    if reply_mode and target.reply_to_message:
-        parent = target.reply_to_message
-        pname, pseed = _sender_name(parent)
-        ptext = (parent.text or parent.caption or "").strip()
-        ptext = _sanitize_text(ptext) if ptext else _sanitize_text(describe_media(parent))
-        if ptext:
-            reply_preview = _ReplyPreview(name=_sanitize_text(pname) or "Usuario", text=ptext, seed=pseed)
-
     texts_to_scan = [t for row in rows for t in (row.name, row.text)]
-    if reply_preview:
-        texts_to_scan += [reply_preview.name, reply_preview.text]
     clusters = _collect_emoji_clusters(*texts_to_scan)
     try:
         unicode_images = await fetch_unicode_emoji_images(clusters) if clusters else {}
@@ -1105,7 +1125,7 @@ async def q_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     try:
         card = _render_quote_card(
-            rows, bg, rounded=not as_image, reply_preview=reply_preview, unicode_images=unicode_images
+            rows, bg, rounded=not as_image, reply_preview=None, unicode_images=unicode_images
         )
         buf = _to_bytes(card, as_webp=not as_image)
     except Exception as exc:  # noqa: BLE001
