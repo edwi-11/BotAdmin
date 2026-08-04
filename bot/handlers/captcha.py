@@ -437,15 +437,34 @@ async def captcha_gatekeeper(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # Respuesta de edad por privado
 # --------------------------------------------------------------------- #
 async def _delete_captcha_notice(context: ContextTypes.DEFAULT_TYPE, pending: CaptchaState) -> None:
-    """Borra el aviso público que se mandó en el grupo (cuando no se pudo
-    mandar el DM), si existe, ahora que la verificación ya se resolvió."""
+    """Borra el aviso público que se mandó en el grupo pidiéndole al
+    usuario iniciar el chat privado (el de "no pude escribirte por
+    privado, tocá el botón..."), ya sea porque no se pudo mandar el DM al
+    detectar el primer mensaje. Se llama apenas la verificación de edad
+    se resuelve (aprobada o rechazada), para que no quede ese mensaje —
+    ni su teclado inline — acumulado en el grupo para siempre."""
     if not pending.notice_message_id:
         return
     try:
         await context.bot.delete_message(pending.group_id, pending.notice_message_id)
+        return
     except TelegramError as exc:
         logger.info(
             "No pude borrar el aviso de captcha (mensaje %s en %s): %s",
+            pending.notice_message_id, pending.group_id, exc,
+        )
+    # Si no se pudo borrar el mensaje completo (por ejemplo, el bot ya no
+    # tiene permiso de borrar mensajes ajenos pero sigue siendo admin),
+    # al menos le quitamos el teclado inline para que ya no quede un
+    # botón "Iniciar chat" activo apuntando a una verificación que ya
+    # terminó.
+    try:
+        await context.bot.edit_message_reply_markup(
+            chat_id=pending.group_id, message_id=pending.notice_message_id, reply_markup=None,
+        )
+    except TelegramError as exc:
+        logger.info(
+            "Tampoco pude quitar el teclado del aviso de captcha (mensaje %s en %s): %s",
             pending.notice_message_id, pending.group_id, exc,
         )
 

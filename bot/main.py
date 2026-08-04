@@ -264,6 +264,13 @@ async def _broadcast_dispatch_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 failed_count += 1
                 if is_users:
                     await db.set_dm_ok(recipient_id, False)
+                else:
+                    # Grupo confirmado inaccesible (nos expulsaron, el
+                    # grupo se borró, etc.): lo sacamos de known_groups ya
+                    # mismo, en vez de esperar a que alguien use /grupos,
+                    # /owner o /menu para que se note y se limpie solo.
+                    await db.remove_group(recipient_id)
+                    known_group_ids.discard(recipient_id)
                 logger.warning(
                     "El usuario/grupo %s bloqueó al bot o no es accesible (anuncio #%s).",
                     recipient_id, broadcast.id,

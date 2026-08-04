@@ -636,7 +636,24 @@ class Database:
                 if column not in existing:
                     await self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
                     logger.info("Migración: añadida columna %s.%s", table, column)
+        await self._dedupe_known_groups()
         await self.conn.commit()
+
+    async def _dedupe_known_groups(self) -> None:
+        """group_id ya es PRIMARY KEY en known_groups, así que no debería
+        poder haber filas duplicadas por diseño. Esto es una limpieza
+        defensiva por si la base viene de una versión muy vieja o de una
+        edición manual: si por algún motivo quedaron dos filas para el
+        mismo group_id, nos quedamos con la más reciente (updated_at) y
+        borramos el resto."""
+        await self.conn.execute(
+            """
+            DELETE FROM known_groups
+            WHERE rowid NOT IN (
+                SELECT MAX(rowid) FROM known_groups GROUP BY group_id
+            )
+            """
+        )
 
     async def close(self) -> None:
         if self._conn is not None:
