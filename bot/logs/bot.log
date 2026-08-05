@@ -1,0 +1,962 @@
+2026-07-02 09:12:46 | INFO     | __main__ | Iniciando bot en modo polling...
+2026-07-02 09:12:47 | ERROR    | telegram.ext | Network Retry Loop (Bootstrap Initialize Application): Invalid token. Aborting retry loop.
+Traceback (most recent call last):
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 844, in initialize
+    await self.get_me()
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 1980, in get_me
+    return await super().get_me(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 975, in get_me
+    result = await self._post(
+             ^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 697, in _post
+    return await self._do_post(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 369, in _do_post
+    return await super()._do_post(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 726, in _do_post
+    result = await request.post(
+             ^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 197, in post
+    result = await self._request_wrapper(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 351, in _request_wrapper
+    raise InvalidToken(message)
+telegram.error.InvalidToken: Unauthorized
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_utils\networkloop.py", line 115, in network_retry_loop
+    if not await do_action():
+           ^^^^^^^^^^^^^^^^^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_utils\networkloop.py", line 93, in do_action
+    return await action_cb()
+           ^^^^^^^^^^^^^^^^^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_application.py", line 486, in initialize
+    await self.bot.initialize()
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 315, in initialize
+    await super().initialize()
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 846, in initialize
+    raise InvalidToken(f"The token `{self._token}` was rejected by the server.") from exc
+telegram.error.InvalidToken: The token `123456789:AAExampleTokenReplaceMe` was rejected by the server.
+2026-07-02 09:13:48 | INFO     | __main__ | Iniciando bot en modo polling...
+2026-07-02 09:13:49 | INFO     | database | Migración: añadida columna group_settings.delete_join
+2026-07-02 09:13:49 | INFO     | database | Migración: añadida columna group_settings.delete_leave
+2026-07-02 09:13:49 | INFO     | database | Migración: añadida columna group_settings.delete_call
+2026-07-02 09:13:49 | INFO     | database | Migración: añadida columna group_settings.delete_commands
+2026-07-02 09:13:49 | INFO     | database | Migración: añadida columna group_settings.filter_punishment
+2026-07-02 09:13:49 | INFO     | database | Migración: añadida columna group_settings.filter_mute_seconds
+2026-07-02 09:13:49 | INFO     | database | Migración: añadida columna group_settings.filter_delete
+2026-07-02 09:13:49 | INFO     | database | Base de datos inicializada en C:\Users\user\Downloads\bot_moderacion_telegram (3)\bot\database\bot.db
+2026-07-02 09:13:49 | INFO     | handlers.afk | Caché AFK cargada con 0 usuario(s).
+2026-07-02 09:13:50 | INFO     | __main__ | Bot inicializado correctamente. Propietarios: [8347377812]
+2026-07-02 09:13:50 | INFO     | telegram.ext.Application | Application started
+2026-07-02 09:20:32 | ERROR    | __main__ | Excepción no controlada al procesar un update: Update(callback_query=CallbackQuery(chat_instance='-7186837748020260701', data='w:add:-1003600074787', from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), id='8181598603164144293', message=Message(channel_chat_created=False, chat=Chat(id=-1003600074787, title='Secret', type=<ChatType.SUPERGROUP>), date=datetime.datetime(2026, 7, 2, 15, 19, 19, tzinfo=datetime.timezone.utc), delete_chat_photo=False, edit_date=datetime.datetime(2026, 7, 2, 15, 20, 30, tzinfo=datetime.timezone.utc), entities=(MessageEntity(length=19, offset=3, type=<MessageEntityType.BOLD>), MessageEntity(length=1, offset=47, type=<MessageEntityType.BOLD>), MessageEntity(length=7, offset=49, type=<MessageEntityType.ITALIC>), MessageEntity(length=11, offset=70, type=<MessageEntityType.BOLD>), MessageEntity(length=2, offset=104, type=<MessageEntityType.BOLD>)), from_user=User(first_name='MorCore', id=8381118130, is_bot=True, username='Mor_CoreBot'), group_chat_created=False, message_id=3637, message_thread_id=3636, reply_markup=InlineKeyboardMarkup(inline_keyboard=((InlineKeyboardButton(callback_data='w:add:-1003600074787', text='➕ Agregar palabra(s)'),), (InlineKeyboardButton(callback_data='w:remove:-1003600074787', text='➖ Eliminar palabra(s)'),), (InlineKeyboardButton(callback_data='w:full:-1003600074787', text='📋 Ver lista completa'),), (InlineKeyboardButton(callback_data='w:punishment:-1003600074787', text='⚖️ Castigo: Solo borrar'),), (InlineKeyboardButton(callback_data='w:togdel:-1003600074787', text='🗑 Borrar mensaje: Sí'),), (InlineKeyboardButton(callback_data='m:main:-1003600074787', text='🔙 Volver'),))), reply_to_message=Message(channel_chat_created=False, chat=Chat(id=-1003600074787, title='Secret', type=<ChatType.SUPERGROUP>), date=datetime.datetime(2026, 7, 2, 15, 19, 18, tzinfo=datetime.timezone.utc), delete_chat_photo=False, entities=(MessageEntity(length=6, offset=0, type=<MessageEntityType.BOT_COMMAND>),), from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), group_chat_created=False, message_id=3636, supergroup_chat_created=False, text='/start'), supergroup_chat_created=False, text='🚫 Palabras prohibidas\n\nPalabras configuradas: 0\nninguna\n\n⚖️ Castigo: Solo borrar\n🗑 Borrar el mensaje: Sí')), update_id=687169411)
+Traceback (most recent call last):
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_application.py", line 1298, in process_update
+    await coroutine
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_handlers\basehandler.py", line 158, in handle_update
+    return await self.callback(update, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\user\Downloads\bot_moderacion_telegram (3)\bot\handlers\filters_words.py", line 208, in words_menu_callback
+    await query.edit_message_text(
+    ...<3 lines>...
+    )
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_callbackquery.py", line 265, in edit_message_text
+    return await self._get_message().edit_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_message.py", line 3809, in edit_text
+    return await self.get_bot().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 1722, in edit_message_text
+    return await super().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 4293, in edit_message_text
+    return await self._send_message(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 629, in _send_message
+    result = await super()._send_message(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<21 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 809, in _send_message
+    result = await self._post(
+             ^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 697, in _post
+    return await self._do_post(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 369, in _do_post
+    return await super()._do_post(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 726, in _do_post
+    result = await request.post(
+             ^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 197, in post
+    result = await self._request_wrapper(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 353, in _request_wrapper
+    raise BadRequest(message)
+telegram.error.BadRequest: Can't parse entities: character '(' is reserved and must be escaped with the preceding '\'
+2026-07-02 09:20:44 | ERROR    | __main__ | Excepción no controlada al procesar un update: Update(callback_query=CallbackQuery(chat_instance='-7186837748020260701', data='w:add:-1003600074787', from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), id='8181598599588287754', message=Message(channel_chat_created=False, chat=Chat(id=-1003600074787, title='Secret', type=<ChatType.SUPERGROUP>), date=datetime.datetime(2026, 7, 2, 15, 19, 19, tzinfo=datetime.timezone.utc), delete_chat_photo=False, edit_date=datetime.datetime(2026, 7, 2, 15, 20, 30, tzinfo=datetime.timezone.utc), entities=(MessageEntity(length=19, offset=3, type=<MessageEntityType.BOLD>), MessageEntity(length=1, offset=47, type=<MessageEntityType.BOLD>), MessageEntity(length=7, offset=49, type=<MessageEntityType.ITALIC>), MessageEntity(length=11, offset=70, type=<MessageEntityType.BOLD>), MessageEntity(length=2, offset=104, type=<MessageEntityType.BOLD>)), from_user=User(first_name='MorCore', id=8381118130, is_bot=True, username='Mor_CoreBot'), group_chat_created=False, message_id=3637, message_thread_id=3636, reply_markup=InlineKeyboardMarkup(inline_keyboard=((InlineKeyboardButton(callback_data='w:add:-1003600074787', text='➕ Agregar palabra(s)'),), (InlineKeyboardButton(callback_data='w:remove:-1003600074787', text='➖ Eliminar palabra(s)'),), (InlineKeyboardButton(callback_data='w:full:-1003600074787', text='📋 Ver lista completa'),), (InlineKeyboardButton(callback_data='w:punishment:-1003600074787', text='⚖️ Castigo: Solo borrar'),), (InlineKeyboardButton(callback_data='w:togdel:-1003600074787', text='🗑 Borrar mensaje: Sí'),), (InlineKeyboardButton(callback_data='m:main:-1003600074787', text='🔙 Volver'),))), reply_to_message=Message(channel_chat_created=False, chat=Chat(id=-1003600074787, title='Secret', type=<ChatType.SUPERGROUP>), date=datetime.datetime(2026, 7, 2, 15, 19, 18, tzinfo=datetime.timezone.utc), delete_chat_photo=False, entities=(MessageEntity(length=6, offset=0, type=<MessageEntityType.BOT_COMMAND>),), from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), group_chat_created=False, message_id=3636, supergroup_chat_created=False, text='/start'), supergroup_chat_created=False, text='🚫 Palabras prohibidas\n\nPalabras configuradas: 0\nninguna\n\n⚖️ Castigo: Solo borrar\n🗑 Borrar el mensaje: Sí')), update_id=687169412)
+Traceback (most recent call last):
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_application.py", line 1298, in process_update
+    await coroutine
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_handlers\basehandler.py", line 158, in handle_update
+    return await self.callback(update, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\user\Downloads\bot_moderacion_telegram (3)\bot\handlers\filters_words.py", line 208, in words_menu_callback
+    await query.edit_message_text(
+    ...<3 lines>...
+    )
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_callbackquery.py", line 265, in edit_message_text
+    return await self._get_message().edit_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_message.py", line 3809, in edit_text
+    return await self.get_bot().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 1722, in edit_message_text
+    return await super().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 4293, in edit_message_text
+    return await self._send_message(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 629, in _send_message
+    result = await super()._send_message(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<21 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 809, in _send_message
+    result = await self._post(
+             ^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 697, in _post
+    return await self._do_post(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 369, in _do_post
+    return await super()._do_post(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 726, in _do_post
+    result = await request.post(
+             ^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 197, in post
+    result = await self._request_wrapper(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 353, in _request_wrapper
+    raise BadRequest(message)
+telegram.error.BadRequest: Can't parse entities: character '(' is reserved and must be escaped with the preceding '\'
+2026-07-02 09:20:48 | ERROR    | __main__ | Excepción no controlada al procesar un update: Update(callback_query=CallbackQuery(chat_instance='-7186837748020260701', data='w:add:-1003600074787', from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), id='8181598601708129371', message=Message(channel_chat_created=False, chat=Chat(id=-1003600074787, title='Secret', type=<ChatType.SUPERGROUP>), date=datetime.datetime(2026, 7, 2, 15, 19, 19, tzinfo=datetime.timezone.utc), delete_chat_photo=False, edit_date=datetime.datetime(2026, 7, 2, 15, 20, 30, tzinfo=datetime.timezone.utc), entities=(MessageEntity(length=19, offset=3, type=<MessageEntityType.BOLD>), MessageEntity(length=1, offset=47, type=<MessageEntityType.BOLD>), MessageEntity(length=7, offset=49, type=<MessageEntityType.ITALIC>), MessageEntity(length=11, offset=70, type=<MessageEntityType.BOLD>), MessageEntity(length=2, offset=104, type=<MessageEntityType.BOLD>)), from_user=User(first_name='MorCore', id=8381118130, is_bot=True, username='Mor_CoreBot'), group_chat_created=False, message_id=3637, message_thread_id=3636, reply_markup=InlineKeyboardMarkup(inline_keyboard=((InlineKeyboardButton(callback_data='w:add:-1003600074787', text='➕ Agregar palabra(s)'),), (InlineKeyboardButton(callback_data='w:remove:-1003600074787', text='➖ Eliminar palabra(s)'),), (InlineKeyboardButton(callback_data='w:full:-1003600074787', text='📋 Ver lista completa'),), (InlineKeyboardButton(callback_data='w:punishment:-1003600074787', text='⚖️ Castigo: Solo borrar'),), (InlineKeyboardButton(callback_data='w:togdel:-1003600074787', text='🗑 Borrar mensaje: Sí'),), (InlineKeyboardButton(callback_data='m:main:-1003600074787', text='🔙 Volver'),))), reply_to_message=Message(channel_chat_created=False, chat=Chat(id=-1003600074787, title='Secret', type=<ChatType.SUPERGROUP>), date=datetime.datetime(2026, 7, 2, 15, 19, 18, tzinfo=datetime.timezone.utc), delete_chat_photo=False, entities=(MessageEntity(length=6, offset=0, type=<MessageEntityType.BOT_COMMAND>),), from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), group_chat_created=False, message_id=3636, supergroup_chat_created=False, text='/start'), supergroup_chat_created=False, text='🚫 Palabras prohibidas\n\nPalabras configuradas: 0\nninguna\n\n⚖️ Castigo: Solo borrar\n🗑 Borrar el mensaje: Sí')), update_id=687169413)
+Traceback (most recent call last):
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_application.py", line 1298, in process_update
+    await coroutine
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_handlers\basehandler.py", line 158, in handle_update
+    return await self.callback(update, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\user\Downloads\bot_moderacion_telegram (3)\bot\handlers\filters_words.py", line 208, in words_menu_callback
+    await query.edit_message_text(
+    ...<3 lines>...
+    )
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_callbackquery.py", line 265, in edit_message_text
+    return await self._get_message().edit_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_message.py", line 3809, in edit_text
+    return await self.get_bot().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 1722, in edit_message_text
+    return await super().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 4293, in edit_message_text
+    return await self._send_message(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 629, in _send_message
+    result = await super()._send_message(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<21 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 809, in _send_message
+    result = await self._post(
+             ^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 697, in _post
+    return await self._do_post(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 369, in _do_post
+    return await super()._do_post(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 726, in _do_post
+    result = await request.post(
+             ^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 197, in post
+    result = await self._request_wrapper(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 353, in _request_wrapper
+    raise BadRequest(message)
+telegram.error.BadRequest: Can't parse entities: character '(' is reserved and must be escaped with the preceding '\'
+2026-07-02 09:21:54 | ERROR    | __main__ | Excepción no controlada al procesar un update: Update(callback_query=CallbackQuery(chat_instance='-7186837748020260701', data='w:add:-1003600074787', from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), id='8181598601616604588', message=Message(channel_chat_created=False, chat=Chat(id=-1003600074787, title='Secret', type=<ChatType.SUPERGROUP>), date=datetime.datetime(2026, 7, 2, 15, 19, 19, tzinfo=datetime.timezone.utc), delete_chat_photo=False, edit_date=datetime.datetime(2026, 7, 2, 15, 20, 30, tzinfo=datetime.timezone.utc), entities=(MessageEntity(length=19, offset=3, type=<MessageEntityType.BOLD>), MessageEntity(length=1, offset=47, type=<MessageEntityType.BOLD>), MessageEntity(length=7, offset=49, type=<MessageEntityType.ITALIC>), MessageEntity(length=11, offset=70, type=<MessageEntityType.BOLD>), MessageEntity(length=2, offset=104, type=<MessageEntityType.BOLD>)), from_user=User(first_name='MorCore', id=8381118130, is_bot=True, username='Mor_CoreBot'), group_chat_created=False, message_id=3637, message_thread_id=3636, reply_markup=InlineKeyboardMarkup(inline_keyboard=((InlineKeyboardButton(callback_data='w:add:-1003600074787', text='➕ Agregar palabra(s)'),), (InlineKeyboardButton(callback_data='w:remove:-1003600074787', text='➖ Eliminar palabra(s)'),), (InlineKeyboardButton(callback_data='w:full:-1003600074787', text='📋 Ver lista completa'),), (InlineKeyboardButton(callback_data='w:punishment:-1003600074787', text='⚖️ Castigo: Solo borrar'),), (InlineKeyboardButton(callback_data='w:togdel:-1003600074787', text='🗑 Borrar mensaje: Sí'),), (InlineKeyboardButton(callback_data='m:main:-1003600074787', text='🔙 Volver'),))), reply_to_message=Message(channel_chat_created=False, chat=Chat(id=-1003600074787, title='Secret', type=<ChatType.SUPERGROUP>), date=datetime.datetime(2026, 7, 2, 15, 19, 18, tzinfo=datetime.timezone.utc), delete_chat_photo=False, entities=(MessageEntity(length=6, offset=0, type=<MessageEntityType.BOT_COMMAND>),), from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), group_chat_created=False, message_id=3636, supergroup_chat_created=False, text='/start'), supergroup_chat_created=False, text='🚫 Palabras prohibidas\n\nPalabras configuradas: 0\nninguna\n\n⚖️ Castigo: Solo borrar\n🗑 Borrar el mensaje: Sí')), update_id=687169418)
+Traceback (most recent call last):
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_application.py", line 1298, in process_update
+    await coroutine
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_handlers\basehandler.py", line 158, in handle_update
+    return await self.callback(update, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\user\Downloads\bot_moderacion_telegram (3)\bot\handlers\filters_words.py", line 208, in words_menu_callback
+    await query.edit_message_text(
+    ...<3 lines>...
+    )
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_callbackquery.py", line 265, in edit_message_text
+    return await self._get_message().edit_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_message.py", line 3809, in edit_text
+    return await self.get_bot().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 1722, in edit_message_text
+    return await super().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 4293, in edit_message_text
+    return await self._send_message(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 629, in _send_message
+    result = await super()._send_message(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<21 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 809, in _send_message
+    result = await self._post(
+             ^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 697, in _post
+    return await self._do_post(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 369, in _do_post
+    return await super()._do_post(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 726, in _do_post
+    result = await request.post(
+             ^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 197, in post
+    result = await self._request_wrapper(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 353, in _request_wrapper
+    raise BadRequest(message)
+telegram.error.BadRequest: Can't parse entities: character '(' is reserved and must be escaped with the preceding '\'
+2026-07-02 09:21:57 | ERROR    | __main__ | Excepción no controlada al procesar un update: Update(callback_query=CallbackQuery(chat_instance='-7186837748020260701', data='w:remove:-1003600074787', from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), id='8181598603266494190', message=Message(channel_chat_created=False, chat=Chat(id=-1003600074787, title='Secret', type=<ChatType.SUPERGROUP>), date=datetime.datetime(2026, 7, 2, 15, 19, 19, tzinfo=datetime.timezone.utc), delete_chat_photo=False, edit_date=datetime.datetime(2026, 7, 2, 15, 20, 30, tzinfo=datetime.timezone.utc), entities=(MessageEntity(length=19, offset=3, type=<MessageEntityType.BOLD>), MessageEntity(length=1, offset=47, type=<MessageEntityType.BOLD>), MessageEntity(length=7, offset=49, type=<MessageEntityType.ITALIC>), MessageEntity(length=11, offset=70, type=<MessageEntityType.BOLD>), MessageEntity(length=2, offset=104, type=<MessageEntityType.BOLD>)), from_user=User(first_name='MorCore', id=8381118130, is_bot=True, username='Mor_CoreBot'), group_chat_created=False, message_id=3637, message_thread_id=3636, reply_markup=InlineKeyboardMarkup(inline_keyboard=((InlineKeyboardButton(callback_data='w:add:-1003600074787', text='➕ Agregar palabra(s)'),), (InlineKeyboardButton(callback_data='w:remove:-1003600074787', text='➖ Eliminar palabra(s)'),), (InlineKeyboardButton(callback_data='w:full:-1003600074787', text='📋 Ver lista completa'),), (InlineKeyboardButton(callback_data='w:punishment:-1003600074787', text='⚖️ Castigo: Solo borrar'),), (InlineKeyboardButton(callback_data='w:togdel:-1003600074787', text='🗑 Borrar mensaje: Sí'),), (InlineKeyboardButton(callback_data='m:main:-1003600074787', text='🔙 Volver'),))), reply_to_message=Message(channel_chat_created=False, chat=Chat(id=-1003600074787, title='Secret', type=<ChatType.SUPERGROUP>), date=datetime.datetime(2026, 7, 2, 15, 19, 18, tzinfo=datetime.timezone.utc), delete_chat_photo=False, entities=(MessageEntity(length=6, offset=0, type=<MessageEntityType.BOT_COMMAND>),), from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), group_chat_created=False, message_id=3636, supergroup_chat_created=False, text='/start'), supergroup_chat_created=False, text='🚫 Palabras prohibidas\n\nPalabras configuradas: 0\nninguna\n\n⚖️ Castigo: Solo borrar\n🗑 Borrar el mensaje: Sí')), update_id=687169419)
+Traceback (most recent call last):
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_application.py", line 1298, in process_update
+    await coroutine
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_handlers\basehandler.py", line 158, in handle_update
+    return await self.callback(update, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\user\Downloads\bot_moderacion_telegram (3)\bot\handlers\filters_words.py", line 218, in words_menu_callback
+    await query.edit_message_text(
+    ...<3 lines>...
+    )
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_callbackquery.py", line 265, in edit_message_text
+    return await self._get_message().edit_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_message.py", line 3809, in edit_text
+    return await self.get_bot().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 1722, in edit_message_text
+    return await super().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 4293, in edit_message_text
+    return await self._send_message(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 629, in _send_message
+    result = await super()._send_message(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<21 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 809, in _send_message
+    result = await self._post(
+             ^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 697, in _post
+    return await self._do_post(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 369, in _do_post
+    return await super()._do_post(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 726, in _do_post
+    result = await request.post(
+             ^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 197, in post
+    result = await self._request_wrapper(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 353, in _request_wrapper
+    raise BadRequest(message)
+telegram.error.BadRequest: Can't parse entities: character '(' is reserved and must be escaped with the preceding '\'
+2026-07-02 09:21:58 | ERROR    | __main__ | Excepción no controlada al procesar un update: Update(callback_query=CallbackQuery(chat_instance='-7186837748020260701', data='w:full:-1003600074787', from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), id='8181598603025664000', message=Message(channel_chat_created=False, chat=Chat(id=-1003600074787, title='Secret', type=<ChatType.SUPERGROUP>), date=datetime.datetime(2026, 7, 2, 15, 19, 19, tzinfo=datetime.timezone.utc), delete_chat_photo=False, edit_date=datetime.datetime(2026, 7, 2, 15, 20, 30, tzinfo=datetime.timezone.utc), entities=(MessageEntity(length=19, offset=3, type=<MessageEntityType.BOLD>), MessageEntity(length=1, offset=47, type=<MessageEntityType.BOLD>), MessageEntity(length=7, offset=49, type=<MessageEntityType.ITALIC>), MessageEntity(length=11, offset=70, type=<MessageEntityType.BOLD>), MessageEntity(length=2, offset=104, type=<MessageEntityType.BOLD>)), from_user=User(first_name='MorCore', id=8381118130, is_bot=True, username='Mor_CoreBot'), group_chat_created=False, message_id=3637, message_thread_id=3636, reply_markup=InlineKeyboardMarkup(inline_keyboard=((InlineKeyboardButton(callback_data='w:add:-1003600074787', text='➕ Agregar palabra(s)'),), (InlineKeyboardButton(callback_data='w:remove:-1003600074787', text='➖ Eliminar palabra(s)'),), (InlineKeyboardButton(callback_data='w:full:-1003600074787', text='📋 Ver lista completa'),), (InlineKeyboardButton(callback_data='w:punishment:-1003600074787', text='⚖️ Castigo: Solo borrar'),), (InlineKeyboardButton(callback_data='w:togdel:-1003600074787', text='🗑 Borrar mensaje: Sí'),), (InlineKeyboardButton(callback_data='m:main:-1003600074787', text='🔙 Volver'),))), reply_to_message=Message(channel_chat_created=False, chat=Chat(id=-1003600074787, title='Secret', type=<ChatType.SUPERGROUP>), date=datetime.datetime(2026, 7, 2, 15, 19, 18, tzinfo=datetime.timezone.utc), delete_chat_photo=False, entities=(MessageEntity(length=6, offset=0, type=<MessageEntityType.BOT_COMMAND>),), from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), group_chat_created=False, message_id=3636, supergroup_chat_created=False, text='/start'), supergroup_chat_created=False, text='🚫 Palabras prohibidas\n\nPalabras configuradas: 0\nninguna\n\n⚖️ Castigo: Solo borrar\n🗑 Borrar el mensaje: Sí')), update_id=687169420)
+Traceback (most recent call last):
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_application.py", line 1298, in process_update
+    await coroutine
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_handlers\basehandler.py", line 158, in handle_update
+    return await self.callback(update, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\user\Downloads\bot_moderacion_telegram (3)\bot\handlers\filters_words.py", line 202, in words_menu_callback
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=back)
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_callbackquery.py", line 265, in edit_message_text
+    return await self._get_message().edit_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_message.py", line 3809, in edit_text
+    return await self.get_bot().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 1722, in edit_message_text
+    return await super().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 4293, in edit_message_text
+    return await self._send_message(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 629, in _send_message
+    result = await super()._send_message(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<21 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 809, in _send_message
+    result = await self._post(
+             ^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 697, in _post
+    return await self._do_post(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 369, in _do_post
+    return await super()._do_post(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 726, in _do_post
+    result = await request.post(
+             ^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 197, in post
+    result = await self._request_wrapper(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 353, in _request_wrapper
+    raise BadRequest(message)
+telegram.error.BadRequest: Can't parse entities: character '.' is reserved and must be escaped with the preceding '\'
+2026-07-02 09:22:13 | ERROR    | __main__ | Excepción no controlada al procesar un update: Update(callback_query=CallbackQuery(chat_instance='-8194311504936361397', data='w:remove:-1003600074787', from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), id='8181598602369215533', message=Message(channel_chat_created=False, chat=Chat(first_name='⌈𝚂⌋', id=8347377812, type=<ChatType.PRIVATE>, username='Sky_lent'), date=datetime.datetime(2026, 7, 2, 15, 19, 8, tzinfo=datetime.timezone.utc), delete_chat_photo=False, edit_date=datetime.datetime(2026, 7, 2, 15, 22, 11, tzinfo=datetime.timezone.utc), entities=(MessageEntity(length=19, offset=3, type=<MessageEntityType.BOLD>), MessageEntity(length=1, offset=47, type=<MessageEntityType.BOLD>), MessageEntity(length=7, offset=49, type=<MessageEntityType.ITALIC>), MessageEntity(length=11, offset=70, type=<MessageEntityType.BOLD>), MessageEntity(length=2, offset=104, type=<MessageEntityType.BOLD>)), from_user=User(first_name='MorCore', id=8381118130, is_bot=True, username='Mor_CoreBot'), group_chat_created=False, message_id=16, reply_markup=InlineKeyboardMarkup(inline_keyboard=((InlineKeyboardButton(callback_data='w:add:-1003600074787', text='➕ Agregar palabra(s)'),), (InlineKeyboardButton(callback_data='w:remove:-1003600074787', text='➖ Eliminar palabra(s)'),), (InlineKeyboardButton(callback_data='w:full:-1003600074787', text='📋 Ver lista completa'),), (InlineKeyboardButton(callback_data='w:punishment:-1003600074787', text='⚖️ Castigo: Solo borrar'),), (InlineKeyboardButton(callback_data='w:togdel:-1003600074787', text='🗑 Borrar mensaje: Sí'),), (InlineKeyboardButton(callback_data='m:main:-1003600074787', text='🔙 Volver'),))), supergroup_chat_created=False, text='🚫 Palabras prohibidas\n\nPalabras configuradas: 0\nninguna\n\n⚖️ Castigo: Solo borrar\n🗑 Borrar el mensaje: Sí')), update_id=687169423)
+Traceback (most recent call last):
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_application.py", line 1298, in process_update
+    await coroutine
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_handlers\basehandler.py", line 158, in handle_update
+    return await self.callback(update, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\user\Downloads\bot_moderacion_telegram (3)\bot\handlers\filters_words.py", line 218, in words_menu_callback
+    await query.edit_message_text(
+    ...<3 lines>...
+    )
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_callbackquery.py", line 265, in edit_message_text
+    return await self._get_message().edit_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_message.py", line 3809, in edit_text
+    return await self.get_bot().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 1722, in edit_message_text
+    return await super().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 4293, in edit_message_text
+    return await self._send_message(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 629, in _send_message
+    result = await super()._send_message(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<21 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 809, in _send_message
+    result = await self._post(
+             ^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 697, in _post
+    return await self._do_post(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 369, in _do_post
+    return await super()._do_post(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 726, in _do_post
+    result = await request.post(
+             ^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 197, in post
+    result = await self._request_wrapper(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 353, in _request_wrapper
+    raise BadRequest(message)
+telegram.error.BadRequest: Can't parse entities: character '(' is reserved and must be escaped with the preceding '\'
+2026-07-02 09:22:34 | ERROR    | __main__ | Excepción no controlada al procesar un update: Update(callback_query=CallbackQuery(chat_instance='-8194311504936361397', data='w:full:-1003600074787', from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), id='8181598601959079271', message=Message(channel_chat_created=False, chat=Chat(first_name='⌈𝚂⌋', id=8347377812, type=<ChatType.PRIVATE>, username='Sky_lent'), date=datetime.datetime(2026, 7, 2, 15, 19, 8, tzinfo=datetime.timezone.utc), delete_chat_photo=False, edit_date=datetime.datetime(2026, 7, 2, 15, 22, 11, tzinfo=datetime.timezone.utc), entities=(MessageEntity(length=19, offset=3, type=<MessageEntityType.BOLD>), MessageEntity(length=1, offset=47, type=<MessageEntityType.BOLD>), MessageEntity(length=7, offset=49, type=<MessageEntityType.ITALIC>), MessageEntity(length=11, offset=70, type=<MessageEntityType.BOLD>), MessageEntity(length=2, offset=104, type=<MessageEntityType.BOLD>)), from_user=User(first_name='MorCore', id=8381118130, is_bot=True, username='Mor_CoreBot'), group_chat_created=False, message_id=16, reply_markup=InlineKeyboardMarkup(inline_keyboard=((InlineKeyboardButton(callback_data='w:add:-1003600074787', text='➕ Agregar palabra(s)'),), (InlineKeyboardButton(callback_data='w:remove:-1003600074787', text='➖ Eliminar palabra(s)'),), (InlineKeyboardButton(callback_data='w:full:-1003600074787', text='📋 Ver lista completa'),), (InlineKeyboardButton(callback_data='w:punishment:-1003600074787', text='⚖️ Castigo: Solo borrar'),), (InlineKeyboardButton(callback_data='w:togdel:-1003600074787', text='🗑 Borrar mensaje: Sí'),), (InlineKeyboardButton(callback_data='m:main:-1003600074787', text='🔙 Volver'),))), supergroup_chat_created=False, text='🚫 Palabras prohibidas\n\nPalabras configuradas: 0\nninguna\n\n⚖️ Castigo: Solo borrar\n🗑 Borrar el mensaje: Sí')), update_id=687169424)
+Traceback (most recent call last):
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_application.py", line 1298, in process_update
+    await coroutine
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_handlers\basehandler.py", line 158, in handle_update
+    return await self.callback(update, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\user\Downloads\bot_moderacion_telegram (3)\bot\handlers\filters_words.py", line 202, in words_menu_callback
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN_V2, reply_markup=back)
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_callbackquery.py", line 265, in edit_message_text
+    return await self._get_message().edit_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_message.py", line 3809, in edit_text
+    return await self.get_bot().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 1722, in edit_message_text
+    return await super().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 4293, in edit_message_text
+    return await self._send_message(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 629, in _send_message
+    result = await super()._send_message(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<21 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 809, in _send_message
+    result = await self._post(
+             ^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 697, in _post
+    return await self._do_post(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 369, in _do_post
+    return await super()._do_post(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 726, in _do_post
+    result = await request.post(
+             ^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 197, in post
+    result = await self._request_wrapper(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 353, in _request_wrapper
+    raise BadRequest(message)
+telegram.error.BadRequest: Can't parse entities: character '.' is reserved and must be escaped with the preceding '\'
+2026-07-02 09:23:36 | ERROR    | __main__ | Excepción no controlada al procesar un update: Update(callback_query=CallbackQuery(chat_instance='-8194311504936361397', data='w:add:-1003600074787', from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), id='8181598599398860185', message=Message(channel_chat_created=False, chat=Chat(first_name='⌈𝚂⌋', id=8347377812, type=<ChatType.PRIVATE>, username='Sky_lent'), date=datetime.datetime(2026, 7, 2, 15, 19, 8, tzinfo=datetime.timezone.utc), delete_chat_photo=False, edit_date=datetime.datetime(2026, 7, 2, 15, 23, 34, tzinfo=datetime.timezone.utc), entities=(MessageEntity(length=19, offset=3, type=<MessageEntityType.BOLD>), MessageEntity(length=1, offset=47, type=<MessageEntityType.BOLD>), MessageEntity(length=7, offset=49, type=<MessageEntityType.ITALIC>), MessageEntity(length=16, offset=70, type=<MessageEntityType.BOLD>), MessageEntity(length=10, offset=108, type=<MessageEntityType.BOLD>), MessageEntity(length=2, offset=141, type=<MessageEntityType.BOLD>)), from_user=User(first_name='MorCore', id=8381118130, is_bot=True, username='Mor_CoreBot'), group_chat_created=False, message_id=16, reply_markup=InlineKeyboardMarkup(inline_keyboard=((InlineKeyboardButton(callback_data='w:add:-1003600074787', text='➕ Agregar palabra(s)'),), (InlineKeyboardButton(callback_data='w:remove:-1003600074787', text='➖ Eliminar palabra(s)'),), (InlineKeyboardButton(callback_data='w:full:-1003600074787', text='📋 Ver lista completa'),), (InlineKeyboardButton(callback_data='w:punishment:-1003600074787', text='⚖️ Castigo: Silenciar (mute)'),), (InlineKeyboardButton(callback_data='w:duration:-1003600074787', text='⏱ Duración: Permanente'),), (InlineKeyboardButton(callback_data='w:togdel:-1003600074787', text='🗑 Borrar mensaje: Sí'),), (InlineKeyboardButton(callback_data='m:main:-1003600074787', text='🔙 Volver'),))), supergroup_chat_created=False, text='🚫 Palabras prohibidas\n\nPalabras configuradas: 0\nninguna\n\n⚖️ Castigo: Silenciar (mute)\n⏱ Duración del mute: Permanente\n🗑 Borrar el mensaje: Sí')), update_id=687169435)
+Traceback (most recent call last):
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_application.py", line 1298, in process_update
+    await coroutine
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_handlers\basehandler.py", line 158, in handle_update
+    return await self.callback(update, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\user\Downloads\bot_moderacion_telegram (3)\bot\handlers\filters_words.py", line 208, in words_menu_callback
+    await query.edit_message_text(
+    ...<3 lines>...
+    )
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_callbackquery.py", line 265, in edit_message_text
+    return await self._get_message().edit_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_message.py", line 3809, in edit_text
+    return await self.get_bot().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 1722, in edit_message_text
+    return await super().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 4293, in edit_message_text
+    return await self._send_message(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 629, in _send_message
+    result = await super()._send_message(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<21 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 809, in _send_message
+    result = await self._post(
+             ^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 697, in _post
+    return await self._do_post(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 369, in _do_post
+    return await super()._do_post(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 726, in _do_post
+    result = await request.post(
+             ^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 197, in post
+    result = await self._request_wrapper(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 353, in _request_wrapper
+    raise BadRequest(message)
+telegram.error.BadRequest: Can't parse entities: character '(' is reserved and must be escaped with the preceding '\'
+2026-07-02 09:25:04 | ERROR    | __main__ | Excepción no controlada al procesar un update: Update(callback_query=CallbackQuery(chat_instance='-7186837748020260701', data='w:add:-1003600074787', from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), id='8181598600027285848', message=Message(channel_chat_created=False, chat=Chat(id=-1003600074787, title='Secret', type=<ChatType.SUPERGROUP>), date=datetime.datetime(2026, 7, 2, 15, 24, 50, tzinfo=datetime.timezone.utc), delete_chat_photo=False, entities=(MessageEntity(length=19, offset=3, type=<MessageEntityType.BOLD>), MessageEntity(length=1, offset=47, type=<MessageEntityType.BOLD>), MessageEntity(length=7, offset=49, type=<MessageEntityType.ITALIC>), MessageEntity(length=16, offset=70, type=<MessageEntityType.BOLD>), MessageEntity(length=10, offset=108, type=<MessageEntityType.BOLD>), MessageEntity(length=2, offset=141, type=<MessageEntityType.BOLD>)), from_user=User(first_name='MorCore', id=8381118130, is_bot=True, username='Mor_CoreBot'), group_chat_created=False, message_id=3645, message_thread_id=3642, reply_markup=InlineKeyboardMarkup(inline_keyboard=((InlineKeyboardButton(callback_data='w:add:-1003600074787', text='➕ Agregar palabra(s)'),), (InlineKeyboardButton(callback_data='w:remove:-1003600074787', text='➖ Eliminar palabra(s)'),), (InlineKeyboardButton(callback_data='w:full:-1003600074787', text='📋 Ver lista completa'),), (InlineKeyboardButton(callback_data='w:punishment:-1003600074787', text='⚖️ Castigo: Silenciar (mute)'),), (InlineKeyboardButton(callback_data='w:duration:-1003600074787', text='⏱ Duración: Permanente'),), (InlineKeyboardButton(callback_data='w:togdel:-1003600074787', text='🗑 Borrar mensaje: Sí'),), (InlineKeyboardButton(callback_data='m:main:-1003600074787', text='🔙 Volver'),))), reply_to_message=Message(channel_chat_created=False, chat=Chat(id=-1003600074787, title='Secret', type=<ChatType.SUPERGROUP>), date=datetime.datetime(2026, 7, 2, 15, 24, 49, tzinfo=datetime.timezone.utc), delete_chat_photo=False, from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), group_chat_created=False, message_id=3643, message_thread_id=3642, supergroup_chat_created=False, text='.'), supergroup_chat_created=False, text='🚫 Palabras prohibidas\n\nPalabras configuradas: 0\nninguna\n\n⚖️ Castigo: Silenciar (mute)\n⏱ Duración del mute: Permanente\n🗑 Borrar el mensaje: Sí')), update_id=687169440)
+Traceback (most recent call last):
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_application.py", line 1298, in process_update
+    await coroutine
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_handlers\basehandler.py", line 158, in handle_update
+    return await self.callback(update, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\user\Downloads\bot_moderacion_telegram (3)\bot\handlers\filters_words.py", line 208, in words_menu_callback
+    await query.edit_message_text(
+    ...<3 lines>...
+    )
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_callbackquery.py", line 265, in edit_message_text
+    return await self._get_message().edit_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_message.py", line 3809, in edit_text
+    return await self.get_bot().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 1722, in edit_message_text
+    return await super().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 4293, in edit_message_text
+    return await self._send_message(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 629, in _send_message
+    result = await super()._send_message(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<21 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 809, in _send_message
+    result = await self._post(
+             ^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 697, in _post
+    return await self._do_post(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 369, in _do_post
+    return await super()._do_post(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 726, in _do_post
+    result = await request.post(
+             ^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 197, in post
+    result = await self._request_wrapper(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 353, in _request_wrapper
+    raise BadRequest(message)
+telegram.error.BadRequest: Can't parse entities: character '(' is reserved and must be escaped with the preceding '\'
+2026-07-02 09:25:14 | ERROR    | __main__ | Excepción no controlada al procesar un update: Update(callback_query=CallbackQuery(chat_instance='-7186837748020260701', data='w:add:-1003600074787', from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), id='8181598602569440771', message=Message(channel_chat_created=False, chat=Chat(id=-1003600074787, title='Secret', type=<ChatType.SUPERGROUP>), date=datetime.datetime(2026, 7, 2, 15, 24, 50, tzinfo=datetime.timezone.utc), delete_chat_photo=False, entities=(MessageEntity(length=19, offset=3, type=<MessageEntityType.BOLD>), MessageEntity(length=1, offset=47, type=<MessageEntityType.BOLD>), MessageEntity(length=7, offset=49, type=<MessageEntityType.ITALIC>), MessageEntity(length=16, offset=70, type=<MessageEntityType.BOLD>), MessageEntity(length=10, offset=108, type=<MessageEntityType.BOLD>), MessageEntity(length=2, offset=141, type=<MessageEntityType.BOLD>)), from_user=User(first_name='MorCore', id=8381118130, is_bot=True, username='Mor_CoreBot'), group_chat_created=False, message_id=3645, message_thread_id=3642, reply_markup=InlineKeyboardMarkup(inline_keyboard=((InlineKeyboardButton(callback_data='w:add:-1003600074787', text='➕ Agregar palabra(s)'),), (InlineKeyboardButton(callback_data='w:remove:-1003600074787', text='➖ Eliminar palabra(s)'),), (InlineKeyboardButton(callback_data='w:full:-1003600074787', text='📋 Ver lista completa'),), (InlineKeyboardButton(callback_data='w:punishment:-1003600074787', text='⚖️ Castigo: Silenciar (mute)'),), (InlineKeyboardButton(callback_data='w:duration:-1003600074787', text='⏱ Duración: Permanente'),), (InlineKeyboardButton(callback_data='w:togdel:-1003600074787', text='🗑 Borrar mensaje: Sí'),), (InlineKeyboardButton(callback_data='m:main:-1003600074787', text='🔙 Volver'),))), reply_to_message=Message(channel_chat_created=False, chat=Chat(id=-1003600074787, title='Secret', type=<ChatType.SUPERGROUP>), date=datetime.datetime(2026, 7, 2, 15, 24, 49, tzinfo=datetime.timezone.utc), delete_chat_photo=False, from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), group_chat_created=False, message_id=3643, message_thread_id=3642, supergroup_chat_created=False, text='.'), supergroup_chat_created=False, text='🚫 Palabras prohibidas\n\nPalabras configuradas: 0\nninguna\n\n⚖️ Castigo: Silenciar (mute)\n⏱ Duración del mute: Permanente\n🗑 Borrar el mensaje: Sí')), update_id=687169442)
+Traceback (most recent call last):
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_application.py", line 1298, in process_update
+    await coroutine
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_handlers\basehandler.py", line 158, in handle_update
+    return await self.callback(update, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\user\Downloads\bot_moderacion_telegram (3)\bot\handlers\filters_words.py", line 208, in words_menu_callback
+    await query.edit_message_text(
+    ...<3 lines>...
+    )
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_callbackquery.py", line 265, in edit_message_text
+    return await self._get_message().edit_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_message.py", line 3809, in edit_text
+    return await self.get_bot().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 1722, in edit_message_text
+    return await super().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 4293, in edit_message_text
+    return await self._send_message(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 629, in _send_message
+    result = await super()._send_message(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<21 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 809, in _send_message
+    result = await self._post(
+             ^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 697, in _post
+    return await self._do_post(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 369, in _do_post
+    return await super()._do_post(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 726, in _do_post
+    result = await request.post(
+             ^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 197, in post
+    result = await self._request_wrapper(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 353, in _request_wrapper
+    raise BadRequest(message)
+telegram.error.BadRequest: Can't parse entities: character '(' is reserved and must be escaped with the preceding '\'
+2026-07-02 09:25:30 | INFO     | database | CMD=filtro_palabras executor=Filtro automático(8381118130) target=.(8790995481) group=Secret(-1003600074787) reason=Palabra prohibida
+2026-07-02 09:25:49 | INFO     | database | CMD=unmute executor=⌈𝚂⌋(8347377812) target=.(8790995481) group=Secret(-1003600074787) reason=None
+2026-07-02 09:28:16 | ERROR    | __main__ | Excepción no controlada al procesar un update: Update(callback_query=CallbackQuery(chat_instance='-7186837748020260701', data='w:remove:-1003600074787', from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), id='8181598602601289468', message=Message(channel_chat_created=False, chat=Chat(id=-1003600074787, title='Secret', type=<ChatType.SUPERGROUP>), date=datetime.datetime(2026, 7, 2, 15, 27, 59, tzinfo=datetime.timezone.utc), delete_chat_photo=False, entities=(MessageEntity(length=19, offset=3, type=<MessageEntityType.BOLD>), MessageEntity(length=1, offset=47, type=<MessageEntityType.BOLD>), MessageEntity(length=16, offset=72, type=<MessageEntityType.BOLD>), MessageEntity(length=10, offset=110, type=<MessageEntityType.BOLD>), MessageEntity(length=2, offset=143, type=<MessageEntityType.BOLD>)), from_user=User(first_name='MorCore', id=8381118130, is_bot=True, username='Mor_CoreBot'), group_chat_created=False, message_id=3663, message_thread_id=3659, reply_markup=InlineKeyboardMarkup(inline_keyboard=((InlineKeyboardButton(callback_data='w:add:-1003600074787', text='➕ Agregar palabra(s)'),), (InlineKeyboardButton(callback_data='w:remove:-1003600074787', text='➖ Eliminar palabra(s)'),), (InlineKeyboardButton(callback_data='w:full:-1003600074787', text='📋 Ver lista completa'),), (InlineKeyboardButton(callback_data='w:punishment:-1003600074787', text='⚖️ Castigo: Silenciar (mute)'),), (InlineKeyboardButton(callback_data='w:duration:-1003600074787', text='⏱ Duración: Permanente'),), (InlineKeyboardButton(callback_data='w:togdel:-1003600074787', text='🗑 Borrar mensaje: Sí'),), (InlineKeyboardButton(callback_data='m:main:-1003600074787', text='🔙 Volver'),))), reply_to_message=Message(channel_chat_created=False, chat=Chat(id=-1003600074787, title='Secret', type=<ChatType.SUPERGROUP>), date=datetime.datetime(2026, 7, 2, 15, 27, 59, tzinfo=datetime.timezone.utc), delete_chat_photo=False, from_user=User(first_name='⌈𝚂⌋', id=8347377812, is_bot=False, is_premium=True, language_code='en', username='Sky_lent'), group_chat_created=False, message_id=3661, message_thread_id=3659, supergroup_chat_created=False, text='Omg'), supergroup_chat_created=False, text='🚫 Palabras prohibidas\n\nPalabras configuradas: 2\nhola, omg\n\n⚖️ Castigo: Silenciar (mute)\n⏱ Duración del mute: Permanente\n🗑 Borrar el mensaje: Sí')), update_id=687169457)
+Traceback (most recent call last):
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_application.py", line 1298, in process_update
+    await coroutine
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_handlers\basehandler.py", line 158, in handle_update
+    return await self.callback(update, context)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\user\Downloads\bot_moderacion_telegram (3)\bot\handlers\filters_words.py", line 218, in words_menu_callback
+    await query.edit_message_text(
+    ...<3 lines>...
+    )
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_callbackquery.py", line 265, in edit_message_text
+    return await self._get_message().edit_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_message.py", line 3809, in edit_text
+    return await self.get_bot().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 1722, in edit_message_text
+    return await super().edit_message_text(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<15 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 4293, in edit_message_text
+    return await self._send_message(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<11 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 629, in _send_message
+    result = await super()._send_message(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<21 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 809, in _send_message
+    result = await self._post(
+             ^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 697, in _post
+    return await self._do_post(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\ext\_extbot.py", line 369, in _do_post
+    return await super()._do_post(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\_bot.py", line 726, in _do_post
+    result = await request.post(
+             ^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 197, in post
+    result = await self._request_wrapper(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\telegram\request\_baserequest.py", line 353, in _request_wrapper
+    raise BadRequest(message)
+telegram.error.BadRequest: Can't parse entities: character '(' is reserved and must be escaped with the preceding '\'
+2026-07-02 09:39:54 | INFO     | telegram.ext.Application | Application is stopping. This might take a moment.
+2026-07-02 09:39:54 | INFO     | telegram.ext.Application | Application.stop() complete
+2026-07-02 09:39:54 | INFO     | database | Conexión a base de datos cerrada.

@@ -1,208 +1,312 @@
-# Cómo subir el bot gratis (para que no dependa de tu computadora)
+"""
+utils/telegram_media.py
+Helpers para /q (quote_sticker.py): descargar y preparar en memoria
+(como imágenes Pillow) todo lo que la tarjeta de cita necesita pedirle
+a la API de Telegram — foto de perfil, miniaturas de fotos/stickers/
+video/GIF, las imágenes de los emojis premium (custom_emoji), y las
+imágenes de los emojis unicode normales (estilo Twemoji, descargadas
+de GitHub) para que el nombre y el texto se vean igual sin depender de
+que el servidor tenga una fuente de emoji-color instalada.
 
-Este bot usa **polling** (se conecta él mismo a Telegram, no necesita que
-te escriban a una URL pública) y tiene **tareas programadas** (los
-mensajes recurrentes, los mutes temporales). Eso significa una cosa
-importante:
+Todo lo de acá es "best effort": si algo falla (sin conexión, el bot no
+tiene permiso, el archivo ya no existe, etc.) las funciones devuelven
+None en vez de levantar una excepción, para que quote_sticker.py pueda
+seguir armando la tarjeta sin esa parte.
 
-> El proceso de Python tiene que quedarse **encendido las 24 horas**. Si
-> el servidor "duerme" el bot deja de responder y los mensajes recurrentes
-> no se disparan a tiempo.
+Limitaciones conocidas (no hay forma de evitarlas solo con la Bot API):
+- Stickers/emojis premium ANIMADOS (.tgs, formato Lottie) no se pueden
+  rasterizar sin la librería `rlottie` (no es un paquete de Python puro
+  y no viene instalada). En esos casos usamos la miniatura estática que
+  Telegram sí manda (`thumbnail`), y si no hay, se omite.
+- Stickers/GIFs en VIDEO (.webm) tampoco se pueden decodificar sin
+  `ffmpeg`/`av`. Mismo fallback: se usa el `thumbnail` que manda Telegram.
+- Los emojis unicode normales se descargan de GitHub (twemoji) la
+  primera vez que aparecen y se cachean en memoria; el servidor
+  necesita salida a internet hacia raw.githubusercontent.com. Si no la
+  tiene, cae de nuevo a dibujar el carácter con la fuente de texto.
+"""
+from __future__ import annotations
 
-Muchos servicios "gratis" (Render, Railway, Replit) en su plan gratuito
-apagan tu aplicación cuando no tiene tráfico durante un rato, lo cual
-rompe justo esas dos cosas. Por eso, para este bot en concreto, la opción
-que de verdad se mantiene encendida gratis y sin trucos es una
-**máquina virtual gratuita para siempre (Oracle Cloud "Always Free")**.
-Abajo dejo esa opción como la recomendada, y otras alternativas más
-rápidas de configurar pero con sus limitaciones, por si prefieres
-probarlas primero.
+import asyncio
+import io
+import logging
+from dataclasses import dataclass
+from typing import Iterable, Optional
 
----
+import httpx
+from PIL import Image, ImageDraw
+from telegram import Bot, MessageEntity, PhotoSize
+from telegram.error import TelegramError
 
-## Opción recomendada: Oracle Cloud "Always Free" (VM gratis para siempre)
+logger = logging.getLogger(__name__)
 
-Oracle Cloud regala, de forma permanente (no es una prueba de 30 días),
-una máquina virtual Linux con hasta 4 núcleos ARM y 24 GB de RAM — muchísimo
-más de lo que este bot necesita. Es la única opción de esta lista con un
-servidor que **nunca se apaga por inactividad**.
 
-**Antes de empezar:** Oracle pide una tarjeta para verificar tu identidad,
-pero **no te cobra nada** mientras te quedes dentro de los límites
-"Always Free" (y este bot los usa de sobra sin acercarse a ellos). En
-algunas regiones/países el registro puede tardar en aprobarse o decirte
-que no hay "capacidad" disponible; si eso pasa, simplemente intenta de
-nuevo más tarde o prueba eligiendo otra región al registrarte.
+# --------------------------------------------------------------------- #
+# Descarga genérica de un file_id a una imagen Pillow
+# --------------------------------------------------------------------- #
+async def _download_image(bot: Bot, file_id: str) -> Optional[Image.Image]:
+    try:
+        tg_file = await bot.get_file(file_id)
+        raw = await tg_file.download_as_bytearray()
+        img = Image.open(io_bytes(raw))
+        img.load()
+        return img.convert("RGBA")
+    except (TelegramError, OSError, ValueError) as exc:
+        logger.debug("No pude descargar el archivo %s: %s", file_id, exc)
+        return None
 
-### Pasos
 
-1. **Crea la cuenta**: entra a https://signup.oraclecloud.com , completa
-   tus datos y verifica tu correo y tarjeta. Elige con cuidado el "home
-   region" (no se puede cambiar después).
+def io_bytes(raw: bytearray):
+    return io.BytesIO(bytes(raw))
 
-2. **Crea la máquina virtual**:
-   - En el menú ☰ → *Compute* → *Instances* → *Create instance*.
-   - En "Image and shape" pulsa *Edit*, elige *Change shape*, selecciona
-     **Ampere (ARM)** → `VM.Standard.A1.Flex` y déjalo con 1-2 OCPUs y
-     6-12 GB de RAM (sobra para este bot; así ni siquiera usas todo tu
-     cupo gratis, por si luego quieres otra cosa).
-   - En "Image" elige **Ubuntu** (la versión LTS más reciente disponible).
-   - Descarga la clave SSH privada que te ofrece generar, o sube la tuya.
-   - Dale a *Create* y espera a que el estado quede en verde ("Running").
 
-3. **Conéctate por SSH** desde tu computadora (esto es solo para
-   configurarlo una vez; después el bot corre solo en el servidor):
+# --------------------------------------------------------------------- #
+# Recortes / máscaras
+# --------------------------------------------------------------------- #
+def circular_crop(img: Image.Image, size: int) -> Image.Image:
+    """Recorta `img` a un círculo de `size`x`size` (cover-fit)."""
+    img = img.convert("RGBA")
+    w, h = img.size
+    side = min(w, h)
+    img = img.crop(((w - side) // 2, (h - side) // 2, (w + side) // 2, (h + side) // 2))
+    img = img.resize((size, size), Image.LANCZOS)
 
-   ```bash
-   ssh -i tu_clave_privada.key ubuntu@IP_PUBLICA_DE_LA_VM
-   ```
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, size, size), fill=255)
+    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    out.paste(img, (0, 0), mask)
+    return out
 
-4. **Instala Python y las dependencias del sistema:**
 
-   ```bash
-   sudo apt update && sudo apt install -y python3-pip python3-venv git unzip
-   ```
+def rounded_crop(img: Image.Image, box_w: int, box_h: int, radius: int) -> Image.Image:
+    """Escala `img` a cover-fit dentro de box_w x box_h y le redondea las esquinas."""
+    img = img.convert("RGBA")
+    w, h = img.size
+    scale = max(box_w / w, box_h / h)
+    new_w, new_h = max(1, round(w * scale)), max(1, round(h * scale))
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+    left = (new_w - box_w) // 2
+    top = (new_h - box_h) // 2
+    img = img.crop((left, top, left + box_w, top + box_h))
 
-5. **Sube el proyecto.** La forma más simple: comprime la carpeta `bot/`
-   en tu computadora y súbela con `scp`:
+    mask = Image.new("L", (box_w, box_h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, box_w, box_h), radius=radius, fill=255)
+    out = Image.new("RGBA", (box_w, box_h), (0, 0, 0, 0))
+    out.paste(img, (0, 0), mask)
+    return out
 
-   ```bash
-   scp -i tu_clave_privada.key bot.zip ubuntu@IP_PUBLICA_DE_LA_VM:~
-   ```
 
-   Luego, ya conectado por SSH:
+def fit_within(img: Image.Image, max_w: int, max_h: int) -> Image.Image:
+    """Escala manteniendo proporción para que quepa dentro de max_w x max_h."""
+    w, h = img.size
+    scale = min(max_w / w, max_h / h, 1.0) if w and h else 1.0
+    if scale < 1.0:
+        img = img.resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS)
+    return img
 
-   ```bash
-   unzip bot.zip -d bot
-   cd bot
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
 
-6. **Configura tu `.env`** con tu token real (`nano .env`, pega los
-   valores, `Ctrl+O` para guardar y `Ctrl+X` para salir):
+# --------------------------------------------------------------------- #
+# Foto de perfil
+# --------------------------------------------------------------------- #
+async def fetch_avatar(bot: Bot, user_id: int, size: int) -> Optional[Image.Image]:
+    """Foto de perfil circular del usuario, o None si no tiene / falla la descarga."""
+    try:
+        photos = await bot.get_user_profile_photos(user_id, limit=1)
+    except TelegramError as exc:
+        logger.debug("No pude pedir la foto de perfil de %s: %s", user_id, exc)
+        return None
+    if not photos or photos.total_count == 0:
+        return None
 
-   ```
-   BOT_TOKEN=tu_token_de_botfather
-   OWNER_IDS=tu_id_de_telegram
-   DATABASE_PATH=database/bot.db
-   LOG_LEVEL=INFO
-   ```
+    largest: PhotoSize = photos.photos[0][-1]
+    img = await _download_image(bot, largest.file_id)
+    if img is None:
+        return None
+    return circular_crop(img, size)
 
-7. **Haz que el bot se quede corriendo siempre**, incluso si cierras la
-   sesión SSH o la VM se reinicia, creando un servicio con `systemd`:
 
-   ```bash
-   sudo nano /etc/systemd/system/telegrambot.service
-   ```
+# --------------------------------------------------------------------- #
+# Miniaturas de media (foto, sticker, video, gif, etc.)
+# --------------------------------------------------------------------- #
+@dataclass(slots=True)
+class MediaThumb:
+    kind: str                      # "photo" | "sticker" | "video" | "animation" | "video_note"
+    image: Image.Image
+    is_static: bool                # False si es un fallback (thumbnail de algo animado)
 
-   Pega esto (ajusta la ruta si tu usuario/carpeta se llama distinto):
 
-   ```ini
-   [Unit]
-   Description=Bot de moderacion de Telegram
-   After=network.target
+async def fetch_message_media(bot: Bot, message) -> Optional[MediaThumb]:
+    """Miniatura representativa del contenido multimedia del mensaje (si tiene)."""
+    try:
+        if message.photo:
+            img = await _download_image(bot, message.photo[-1].file_id)
+            return MediaThumb("photo", img, True) if img else None
 
-   [Service]
-   User=ubuntu
-   WorkingDirectory=/home/ubuntu/bot
-   ExecStart=/home/ubuntu/bot/venv/bin/python main.py
-   Restart=always
-   RestartSec=5
+        if message.sticker:
+            sticker = message.sticker
+            if not sticker.is_animated and not sticker.is_video:
+                img = await _download_image(bot, sticker.file_id)
+                if img:
+                    return MediaThumb("sticker", img, True)
+            # Animado (.tgs) o video (.webm): no se puede rasterizar sin
+            # rlottie/ffmpeg, así que usamos la miniatura estática si existe.
+            if sticker.thumbnail:
+                img = await _download_image(bot, sticker.thumbnail.file_id)
+                if img:
+                    return MediaThumb("sticker", img, False)
+            return None
 
-   [Install]
-   WantedBy=multi-user.target
-   ```
+        if message.video:
+            if message.video.thumbnail:
+                img = await _download_image(bot, message.video.thumbnail.file_id)
+                if img:
+                    return MediaThumb("video", img, False)
+            return None
 
-   Y actívalo:
+        if message.animation:
+            if message.animation.thumbnail:
+                img = await _download_image(bot, message.animation.thumbnail.file_id)
+                if img:
+                    return MediaThumb("animation", img, False)
+            return None
 
-   ```bash
-   sudo systemctl daemon-reload
-   sudo systemctl enable telegrambot
-   sudo systemctl start telegrambot
-   ```
+        if message.video_note:
+            if message.video_note.thumbnail:
+                img = await _download_image(bot, message.video_note.thumbnail.file_id)
+                if img:
+                    return MediaThumb("video_note", circular_crop(img, img.size[0]), False)
+            return None
 
-8. **Verifica que esté vivo:**
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("No pude armar la miniatura del mensaje: %s", exc)
+        return None
 
-   ```bash
-   sudo systemctl status telegrambot
-   journalctl -u telegrambot -f     # ver los logs en vivo, Ctrl+C para salir
-   ```
+    return None
 
-Listo: el bot queda corriendo 24/7 en Oracle, gratis, y `Restart=always`
-hace que si algo lo tumba (un error, un reinicio de la VM) vuelva a
-levantarse solo.
 
-Para actualizar el código más adelante: sube los archivos nuevos por
-`scp`, y corre `sudo systemctl restart telegrambot`.
+# --------------------------------------------------------------------- #
+# Emojis premium (custom_emoji) — descarga best-effort de su imagen
+# --------------------------------------------------------------------- #
+async def fetch_custom_emoji_images(bot: Bot, entities: list[MessageEntity]) -> dict[str, Optional[Image.Image]]:
+    """
+    Devuelve {custom_emoji_id: imagen_o_None} para cada entidad custom_emoji.
+    None significa "no se pudo rasterizar" (casi siempre porque es un emoji
+    premium ANIMADO, .tgs/.webm) — en ese caso quote_sticker.py debe caer
+    de nuevo al carácter unicode de reemplazo que Telegram ya incluye en el
+    texto original (todo custom_emoji envuelve un emoji unicode normal).
+    """
+    ids = [e.custom_emoji_id for e in entities if e.type == MessageEntity.CUSTOM_EMOJI and e.custom_emoji_id]
+    if not ids:
+        return {}
 
----
+    result: dict[str, Optional[Image.Image]] = {i: None for i in ids}
+    try:
+        stickers = await bot.get_custom_emoji_stickers(ids)
+    except TelegramError as exc:
+        logger.debug("No pude pedir los emojis premium %s: %s", ids, exc)
+        return result
 
-## Alternativas más rápidas de configurar (con matices)
+    for sticker in stickers:
+        if sticker.is_animated or sticker.is_video:
+            continue  # ver docstring: no rasterizable sin rlottie/ffmpeg
+        img = await _download_image(bot, sticker.file_id)
+        if img:
+            result[sticker.custom_emoji_id] = img
+    return result
 
-Si por ahora solo quieres **probar** el bot sin pelearte con una VM,
-estas opciones son más fáciles de arrancar, pero ninguna te da un
-proceso verdaderamente 24/7 gratis para siempre:
 
-- **Render** (render.com): despliegue gratuito por GitHub muy simple,
-  pero el plan gratis "duerme" el servicio tras ~15 minutos sin tráfico
-  entrante, y para un bot con polling y tareas programadas eso significa
-  que se puede saltar advertencias, mutes temporales o mensajes
-  recurrentes mientras está dormido. Sirve para probar, no para producción.
-- **Railway** (railway.com): ya no tiene un plan gratuito indefinido;
-  da un pequeño crédito mensual (no alcanza para 24/7 real) y luego pide
-  el plan Hobby de pago (~5 USD/mes).
-- **PythonAnywhere**: el plan gratuito no permite procesos "always-on"
-  (eso es de pago); solo sirve para tareas puntuales/programadas cortas.
+# --------------------------------------------------------------------- #
+# Emojis unicode normales — se descarga la imagen real (estilo Twemoji)
+# en vez de depender de que el servidor tenga una fuente de emoji a
+# color instalada. Esto es lo que evita que nombres/mensajes con emoji
+# se vean como "□□□" cuando el servidor no tiene esa fuente.
+#
+# Se cachean en memoria por el tiempo de vida del proceso (un emoji
+# siempre se ve igual, no hace falta volver a pedirlo).
+# --------------------------------------------------------------------- #
+_UNICODE_EMOJI_CACHE: dict[str, Optional[Image.Image]] = {}
+_VARIATION_SELECTORS = {0xFE0E, 0xFE0F}
+_TWEMOJI_URL_TEMPLATES = [
+    # jsdelivr primero: es un CDN normal (mismo tipo de dominio que npm/JS
+    # que casi ningún proveedor bloquea), a diferencia de raw.githubusercontent.com
+    # que en algunos VPS/paises está bloqueado o filtrado por el firewall del
+    # hosting — si esa era la causa de que los emojis no aparecieran nunca,
+    # este mirror la evita.
+    "https://cdn.jsdelivr.net/gh/jdecked/twemoji@latest/assets/72x72/{cp}.png",
+    "https://raw.githubusercontent.com/jdecked/twemoji/main/assets/72x72/{cp}.png",
+    "https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/{cp}.png",
+]
 
-En resumen: si de verdad quieres olvidarte de tu computadora y que el
-bot funcione siempre, la VM gratuita de Oracle (o, si prefieres pagar
-algo simbólico, una VPS económica de 3-5 USD/mes tipo Hetzner/DigitalOcean/
-Railway Hobby) es el camino más confiable. Las plataformas 100% gratis
-del resto están pensadas para apps web que responden a visitas, no para
-procesos en segundo plano que deben estar despiertos todo el tiempo.
+_http_client_lock = asyncio.Lock()
+_http_client: Optional[httpx.AsyncClient] = None
 
----
 
-## Bot anunciador (opcional)
+async def _get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    async with _http_client_lock:
+        if _http_client is None or _http_client.is_closed:
+            # Timeout más generoso (antes 6s): en un VPS con salida lenta a
+            # internet, 6s a veces no alcanza ni para el primer intento y
+            # el emoji terminaba sin dibujarse nunca.
+            _http_client = httpx.AsyncClient(timeout=12.0)
+        return _http_client
 
-Si decides usar `broadcast_bot.py` (ver README para configurarlo), es
-un proceso Python independiente — dale su propio servicio systemd para
-que también se quede corriendo 24/7:
 
-```bash
-sudo nano /etc/systemd/system/telegrambroadcast.service
-```
+def _cluster_codepoints(cluster: str) -> str:
+    return "-".join(f"{ord(ch):x}" for ch in cluster if ord(ch) not in _VARIATION_SELECTORS)
 
-```ini
-[Unit]
-Description=Bot anunciador de Telegram
-After=network.target
 
-[Service]
-User=root
-WorkingDirectory=/root/BotAdmin/bot
-ExecStart=/root/BotAdmin/bot/venv/bin/python broadcast_bot.py
-Restart=always
-RestartSec=5
+async def fetch_unicode_emoji_image(cluster: str) -> Optional[Image.Image]:
+    """Imagen (color) de un emoji unicode "normal" (no premium), identificado
+    por su cluster de texto exacto (p. ej. "🐺" o "👨‍👩‍👧"). None si no se
+    pudo descargar — en ese caso quote_sticker.py cae de nuevo a dibujar el
+    carácter con la fuente de texto (puede verse como "tofu" si el servidor
+    no tiene una fuente de emoji instalada)."""
+    if cluster in _UNICODE_EMOJI_CACHE:
+        return _UNICODE_EMOJI_CACHE[cluster]
 
-[Install]
-WantedBy=multi-user.target
-```
+    codepoints_no_vs = _cluster_codepoints(cluster)
+    codepoints_with_vs = "-".join(f"{ord(ch):x}" for ch in cluster)
+    candidates = [codepoints_no_vs]
+    if codepoints_with_vs and codepoints_with_vs != codepoints_no_vs:
+        candidates.append(codepoints_with_vs)  # algunos archivos de twemoji solo existen con -fe0f
+    if not codepoints_no_vs:
+        _UNICODE_EMOJI_CACHE[cluster] = None
+        return None
 
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable telegrambroadcast
-sudo systemctl start telegrambroadcast
-```
+    img: Optional[Image.Image] = None
+    try:
+        client = await _get_http_client()
+        for codepoints in candidates:
+            if img is not None:
+                break
+            for template in _TWEMOJI_URL_TEMPLATES:
+                url = template.format(cp=codepoints)
+                for attempt in range(2):  # un reintento extra por si fue un timeout puntual
+                    try:
+                        resp = await client.get(url, follow_redirects=True)
+                        if resp.status_code == 200 and resp.content:
+                            candidate = Image.open(io.BytesIO(resp.content))
+                            candidate.load()
+                            img = candidate.convert("RGBA")
+                        break
+                    except (httpx.HTTPError, OSError):
+                        continue
+                if img is not None:
+                    break
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("No pude descargar el emoji %s (%s): %s", cluster, codepoints_no_vs, exc)
 
-Ambos procesos (`telegrambot` y `telegrambroadcast`) pueden correr al
-mismo tiempo sin problema: usan tokens distintos y comparten la misma
-base de datos solo para leer/escribir la cola de anuncios.
+    _UNICODE_EMOJI_CACHE[cluster] = img
+    return img
 
----
 
-*(Esta guía se escribió en julio de 2026; las condiciones de estos
-servicios cambian con frecuencia — conviene revisar la página oficial de
-cada uno antes de decidir.)*
+async def fetch_unicode_emoji_images(clusters: Iterable[str]) -> dict[str, Optional[Image.Image]]:
+    """Descarga (en paralelo) las imágenes de todos los clusters de emoji
+    únicos en `clusters`, usando la caché en memoria cuando ya se pidieron
+    antes. Devuelve {cluster: imagen_o_None}."""
+    unique = list(dict.fromkeys(clusters))
+    pending = [c for c in unique if c not in _UNICODE_EMOJI_CACHE]
+    if pending:
+        await asyncio.gather(*(fetch_unicode_emoji_image(c) for c in pending))
+    return {c: _UNICODE_EMOJI_CACHE.get(c) for c in unique}
