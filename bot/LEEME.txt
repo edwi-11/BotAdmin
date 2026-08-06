@@ -1,0 +1,48 @@
+Archivos modificados / creados — resumen rápido
+=================================================
+
+Estos son SOLO los archivos que toqué durante toda la conversación.
+Reemplazan al archivo del mismo nombre/ruta en tu proyecto; el resto de
+tu proyecto (economía, filtros, moderación, gemini, etc.) no se toca.
+
+1. utils/groups.py            (MODIFICADO)
+   - Verificación real de grupos contra Telegram: estado activo /
+     expulsado / sin acceso, cantidad de miembros, ya no descarta
+     grupos en silencio por errores transitorios.
+
+2. handlers/owner_groups.py   (MODIFICADO)
+   - /grupos ahora muestra nombre, ID, cantidad de miembros y estado de
+     cada grupo (antes solo mostraba nombre + link).
+
+3. database.py                (MODIFICADO)
+   - Limpieza defensiva de duplicados en known_groups al iniciar.
+   - Backfill automático de títulos de grupo faltantes, tomándolos de
+     mod_logs / reports / captcha_state si existen ahí.
+
+4. main.py                    (MODIFICADO)
+   - El job de envío de anuncios ahora borra de known_groups un grupo
+     apenas confirma que el bot ya no tiene acceso (Forbidden), en vez
+     de dejarlo "fantasma" hasta la próxima vez que se use /grupos.
+
+5. handlers/captcha.py        (MODIFICADO)
+   - Si no se puede borrar el aviso de "iniciá el chat conmigo" en el
+     grupo (por permisos), como respaldo al menos le saca el botón
+     inline para que no quede un botón activo sin sentido.
+
+6. handlers/greetings.py      (MODIFICADO)
+   - Si la bienvenida es "solo privado" y el DM falla, ya NO se manda
+     ningún aviso de reemplazo en el grupo pidiendo iniciar el bot.
+     Simplemente no se envía nada en ese caso. (El captcha no se tocó,
+     sigue con su propio aviso normalmente.)
+
+7. scripts/verificar_dm.py    (NUEVO)
+   - Script de mantenimiento para correr UNA VEZ a mano (no lo usa el
+     bot solo). Revisa contra Telegram a los usuarios con dm_ok=0/NULL
+     (quedaron así porque esa columna se agregó después de que ya
+     existieran, y SQLite les puso 0 por defecto a todos, aunque
+     muchos sí podían recibir mensajes) y corrige el dato real.
+   - Uso: con el bot detenido, `python scripts/verificar_dm.py`
+
+IMPORTANTE: este zip NO incluye ningún archivo de base de datos
+(bot.db). Nunca reemplaces database/bot.db con nada de un zip mío —
+esa carpeta es solo tuya, en el VPS.

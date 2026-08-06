@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import logging
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import Update
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
@@ -421,7 +421,6 @@ async def on_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     send_to = settings.welcome_send_to  # group | private | both
     need_group = send_to in ("group", "both")
     need_private = send_to in ("private", "both")
-    dm_failed: list = []
 
     for new_user in message.new_chat_members:
         if new_user.is_bot and new_user.id == context.bot.id:
@@ -454,32 +453,13 @@ async def on_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 # nadie en esa situación (no hay forma de saltarse esto).
                 logger.info("No pude mandar bienvenida privada a %s en %s: %s", new_user.id, chat.id, exc)
                 await db.set_dm_ok(new_user.id, False)
-                dm_failed.append(new_user)
 
-    if need_private and not need_group and dm_failed:
-        # Aviso corto en el grupo solo para los que no pudieron recibir el
-        # privado, con un botón que los manda a iniciar chat con el bot.
-        try:
-            bot_username = (await context.bot.get_me()).username
-        except TelegramError:
-            bot_username = None
-        for new_user in dm_failed:
-            mention = f'<a href="tg://user?id={new_user.id}">{new_user.first_name}</a>'
-            markup = None
-            if bot_username:
-                markup = InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("✉️ Iniciar chat con el bot", url=f"https://t.me/{bot_username}?start=1")]]
-                )
-            try:
-                await context.bot.send_message(
-                    chat.id,
-                    f"👋 {mention}, tu bienvenida es por privado pero todavía no iniciaste "
-                    "un chat conmigo — tocá el botón para recibirla.",
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=markup,
-                )
-            except TelegramError as exc:
-                logger.warning("No se pudo avisar en %s que la bienvenida privada falló: %s", chat.id, exc)
+    # Nota: si la bienvenida es solo por privado (send_to="private") y el
+    # DM falla porque el usuario nunca abrió un chat con el bot, NO se
+    # manda ningún aviso de reemplazo en el grupo — simplemente se omite
+    # en silencio. Si el usuario abre un chat con el bot más adelante,
+    # no recibe la bienvenida retroactivamente (no hay cola de reintento
+    # para esto), pero tampoco se le pide "iniciá el bot" en el grupo.
 
 
 async def on_left_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
