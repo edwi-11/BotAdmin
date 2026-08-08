@@ -283,6 +283,23 @@ CREATE TABLE IF NOT EXISTS weekly_new_members (
     count       INTEGER NOT NULL DEFAULT 0,
     updated_at  INTEGER NOT NULL
 );
+
+-- Paquetes de stickers "kangeados" (robados/copiados) por cada usuario.
+-- Un mismo usuario puede tener varios paquetes: uno por cada formato de
+-- sticker (estático / animado / video, Telegram no permite mezclarlos en
+-- un mismo paquete) y varios "volúmenes" del mismo formato una vez que
+-- un paquete llega al límite de figuritas de Telegram y hay que abrir
+-- uno nuevo.
+CREATE TABLE IF NOT EXISTS kang_packs (
+    user_id        INTEGER NOT NULL,
+    format         TEXT NOT NULL,   -- 'static' | 'animated' | 'video'
+    volume         INTEGER NOT NULL,
+    pack_name      TEXT NOT NULL,
+    sticker_count  INTEGER NOT NULL DEFAULT 0,
+    created_at     INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL,
+    PRIMARY KEY (user_id, format, volume)
+);
 """
 
 # Columnas que se añadieron después de la primera versión del esquema.
@@ -1530,6 +1547,37 @@ class Database:
             "INSERT INTO activity_meta (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, value),
+        )
+        await self.conn.commit()
+
+    # ------------------------------------------------------------------ #
+    # Paquetes de stickers "kangeados" (/kang, /steal)
+    # ------------------------------------------------------------------ #
+    async def get_latest_kang_pack(self, user_id: int, fmt: str) -> Optional[aiosqlite.Row]:
+        """Devuelve la fila del volumen más alto que tiene el usuario para
+        ese formato (estático/animado/video), o None si todavía no tiene
+        ningún paquete de ese tipo."""
+        cursor = await self.conn.execute(
+            "SELECT * FROM kang_packs WHERE user_id = ? AND format = ? "
+            "ORDER BY volume DESC LIMIT 1",
+            (user_id, fmt),
+        )
+        return await cursor.fetchone()
+
+    async def create_kang_pack(self, user_id: int, fmt: str, volume: int, pack_name: str) -> None:
+        now = int(time.time())
+        await self.conn.execute(
+            "INSERT INTO kang_packs (user_id, format, volume, pack_name, sticker_count, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, 0, ?, ?)",
+            (user_id, fmt, volume, pack_name, now, now),
+        )
+        await self.conn.commit()
+
+    async def bump_kang_pack_count(self, user_id: int, fmt: str, volume: int) -> None:
+        await self.conn.execute(
+            "UPDATE kang_packs SET sticker_count = sticker_count + 1, updated_at = ? "
+            "WHERE user_id = ? AND format = ? AND volume = ?",
+            (int(time.time()), user_id, fmt, volume),
         )
         await self.conn.commit()
 

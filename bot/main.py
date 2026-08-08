@@ -66,6 +66,7 @@ from handlers.cleanup import (
 from handlers.filters_words import check_banned_words, try_consume_pending_words, words_menu_callback
 from handlers.free import free_command, freelist_command, unfree_command
 from handlers.gemini_chat import ceo_trigger
+from handlers.kang import kang_command
 from handlers.horoscopo import horoscopo_command, try_consume_pending_birthdate
 from handlers.menu import menu_callback, menu_command, try_consume_pending_input
 from utils.message_log import track_message
@@ -485,6 +486,7 @@ def build_application() -> Application:
 
     # --- Lista de grupos + links de invitación (solo el propietario) ---
     application.add_handler(CommandHandler("grupos", grupos_command))
+    application.add_handler(CommandHandler(["kang", "steal"], kang_command))
     application.add_handler(CommandHandler("owner", owner_command))
     application.add_handler(CommandHandler("ready", ready_command))
     application.add_handler(CallbackQueryHandler(owner_select_callback, pattern=r"^remote:"))

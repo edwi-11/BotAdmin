@@ -43,6 +43,31 @@ tu proyecto (economía, filtros, moderación, gemini, etc.) no se toca.
      muchos sí podían recibir mensajes) y corrige el dato real.
    - Uso: con el bot detenido, `python scripts/verificar_dm.py`
 
+8. handlers/afk.py             (MODIFICADO)
+   - Bug de compatibilidad con la versión nueva de python-telegram-bot:
+     message.entities ahora devuelve una tupla, no una lista, y el
+     código hacía `(entities or []) + (caption_entities or [])`, que
+     revienta con TypeError en CUALQUIER mensaje con entidades (por
+     ejemplo /start, o cualquier @mención). Esto es lo que estaba
+     tirando abajo las respuestas del bot, no un tema de volumen de
+     mensajes. Arreglado usando tuplas en vez de listas para que
+     funcione sea cual sea el tipo que devuelva la librería.
+
+9. handlers/kang.py             (NUEVO)
+   - Comandos /kang y /steal: respondiendo a un sticker o imagen, lo
+     agrega a un paquete de stickers propio del usuario. Si todavía no
+     tiene paquete de ese tipo (estático/animado/video van en paquetes
+     separados, Telegram no los deja mezclar), el bot lo crea solo, sin
+     pedir nada más. Cuando un paquete llega a 120 figuritas, abre un
+     volumen nuevo automáticamente.
+   - Requiere agregar la tabla `kang_packs` (ver database.py) y que el
+     usuario haya hablado alguna vez por privado con el bot (requisito
+     de Telegram para poder crearle un paquete a nombre suyo) — si no,
+     el bot se lo avisa con un mensaje claro en vez de fallar en
+     silencio.
+   - Se registra en main.py con:
+     application.add_handler(CommandHandler(["kang", "steal"], kang_command))
+
 IMPORTANTE: este zip NO incluye ningún archivo de base de datos
 (bot.db). Nunca reemplaces database/bot.db con nada de un zip mío —
 esa carpeta es solo tuya, en el VPS.

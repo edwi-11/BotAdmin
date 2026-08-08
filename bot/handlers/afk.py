@@ -119,7 +119,7 @@ async def brb_text_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 def _extract_mentioned_usernames(message) -> list[str]:
     usernames: list[str] = []
     text = message.text or message.caption or ""
-    for entity in (message.entities or []) + (message.caption_entities or []):
+    for entity in tuple(message.entities or ()) + tuple(message.caption_entities or ()):
         if entity.type == MessageEntityType.MENTION:
             usernames.append(text[entity.offset: entity.offset + entity.length].lstrip("@").lower())
     return usernames
@@ -127,7 +127,7 @@ def _extract_mentioned_usernames(message) -> list[str]:
 
 def _extract_text_mention_ids(message) -> list[int]:
     ids: list[int] = []
-    for entity in (message.entities or []) + (message.caption_entities or []):
+    for entity in tuple(message.entities or ()) + tuple(message.caption_entities or ()):
         if entity.type == MessageEntityType.TEXT_MENTION and entity.user:
             ids.append(entity.user.id)
     return ids
