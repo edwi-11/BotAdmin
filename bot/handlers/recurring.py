@@ -507,6 +507,10 @@ async def recurring_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "\\(una fila por línea, botones de la misma fila separados por ` | `\\):\n\n"
             "`Texto del botón - https://enlace.com`\n"
             "`Botón A - https://a.com | Botón B - https://b.com`\n\n"
+            "💡 Podés ponerles color de verdad agregando una etiqueta al principio:\n"
+            "`[rojo] Cancelar - https://enlace.com`\n"
+            "`[verde] Confirmar - https://enlace.com`\n"
+            "`[azul] Info - https://enlace.com`\n\n"
             "O envía `no` para quitar los botones\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=_cancel_field_keyboard(group_id),

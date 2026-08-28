@@ -1,43 +1,39 @@
-Cambios de esta tanda (4 archivos)
-===================================
+Cambios de esta tanda (3 archivos) — color real en los botones
+================================================================
 
-1. handlers/owner_groups.py  (REESCRITO)
-   - /grupos ahora es un menú paginado: botones "⬅️ Anterior" /
-     "Siguiente ➡️" para recorrer todos los grupos (6 por página) en vez
-     de mandar todo en mensajes larguísimos de una sola vez.
-   - Botón "🔄 Actualizar" para volver a consultar el estado real contra
-     Telegram cuando quieras.
-   - El link de invitación de cada grupo se pide recién cuando esa
-     página se muestra (y se cachea), para que navegar sea rápido.
+Corrección importante: SÍ se puede poner color real a los botones.
+Telegram lo agregó en la Bot API 9.4 (9 de febrero de 2026): 'primary'
+(azul), 'success' (verde), 'danger' (rojo). Tu bot ya tiene la versión de
+la librería (python-telegram-bot 22.8) que lo soporta.
 
-2. main.py  (MODIFICADO)
-   - El envío de anuncios ahora manda un mensaje de progreso en vivo al
-     propietario que armó el anuncio (por privado, desde el bot de
-     moderación), y lo va editando cada 10 envíos: "15/120 — ✅ 14
-     enviados, ⚠️ 1 fallido". Al terminar, edita ese mismo mensaje con el
-     resumen final.
-   - Si el anuncio tiene "fijar" activado, después de mandar cada copia
-     intenta fijarla en ese chat/grupo (silenciosa o con notificación,
-     según se haya elegido al armar el anuncio). Si no se puede fijar en
-     algún lugar puntual (el bot no es admin ahí), no cuenta como un
-     envío fallido — el mensaje sí se mandó, solo no se pudo fijar.
+1. utils/entities.py (MODIFICADO)
+   - parse_buttons_text() ahora acepta una etiqueta de color opcional al
+     principio de cada botón, entre corchetes:
+       [rojo] Cancelar - https://enlace.com
+       [verde] Confirmar - https://enlace.com
+       [azul] Info - https://enlace.com
+     (también funciona con red/green/blue o danger/success/primary
+     directo). Si no ponés etiqueta, el botón queda con el color por
+     defecto de Telegram, como siempre.
+   - build_inline_keyboard() ahora pasa ese color real a Telegram
+     (parámetro `style` de InlineKeyboardButton).
+   - describe_buttons() muestra un emoji del color correspondiente en la
+     vista previa del compositor, para que se vea de un vistazo qué
+     color tiene cada botón antes de mandarlo.
 
-3. database.py  (MODIFICADO)
-   - Nuevas columnas en broadcast_queue: pin_enabled, pin_silent (para
-     que el bot de anuncios pueda pedir fijar o no, y con/sin
-     notificación).
-   - create_broadcast() y BroadcastMessage actualizados para
-     leer/escribir esas columnas nuevas.
+2. handlers/broadcast.py (MODIFICADO — bot ANUNCIADOR)
+   - Actualicé las instrucciones de "🔘 Botones" del compositor de
+     anuncios para explicar la sintaxis nueva de colores.
 
-4. handlers/broadcast.py  (MODIFICADO — bot ANUNCIADOR, broadcast_bot.py)
-   - En el compositor de anuncios ahora hay un botón "📌 Fijar al enviar:
-     Sí/No", y si está en Sí, otro botón para elegir "🔕 Silenciosa" o
-     "🔔 Con notificación".
-   - En el paso de botones del anuncio, se agregó un tip con círculos de
-     color por emoji (🔴 🟠 🟡 🟢 🔵 🟣 ⚫️ ⚪️ 🟤) para diferenciar botones
-     visualmente — ACLARACIÓN: Telegram no permite pintar los botones de
-     color de verdad (es una limitación de la plataforma, no del bot),
-     esto es la forma más parecida de lograrlo.
+3. handlers/recurring.py (MODIFICADO — bot de moderación, mensajes
+   recurrentes)
+   - Mismo cambio de instrucciones, para que sea consistente: como los
+     mensajes recurrentes usan el mismo parser de botones, ya podés
+     ponerles color ahí también sin ningún cambio de código adicional.
+
+No hace falta tocar la base de datos para esto — el color se guarda
+dentro del mismo JSON de botones que ya se guardaba antes (buttons_json),
+solo se le agregó una clave "style" opcional a cada botón.
 
 IMPORTANTE: este zip NO incluye ningún archivo de base de datos
 (bot.db). Nunca reemplaces database/bot.db con nada de un zip mío —

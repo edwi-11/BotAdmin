@@ -292,12 +292,13 @@ async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text(
             "🔘 Envía los botones \\(mismo formato que en el bot de moderación\\), "
             "o `no` para quitarlos:\n\n`Texto - https://enlace.com`\n\n"
-            "💡 *Tip:* Telegram no permite pintar los botones de color, pero podés "
-            "poner un círculo de color adelante del texto para diferenciarlos a "
-            "simple vista, por ejemplo:\n"
-            "`🔴 Cerrar - https://enlace.com`\n"
-            "`🟢 Confirmar - https://enlace.com`\n\n"
-            "Colores disponibles: 🔴 🟠 🟡 🟢 🔵 🟣 ⚫️ ⚪️ 🟤",
+            "💡 *Ahora podés ponerles color de verdad* \\(función nueva de Telegram\\), "
+            "agregando una etiqueta al principio de cada botón:\n"
+            "`[rojo] Cancelar - https://enlace.com`\n"
+            "`[verde] Confirmar - https://enlace.com`\n"
+            "`[azul] Info - https://enlace.com`\n\n"
+            "Colores disponibles: rojo, verde, azul \\(si no ponés ninguno, queda "
+            "con el color por defecto de Telegram\\)\\.",
             parse_mode=ParseMode.MARKDOWN_V2, reply_markup=_cancel_field_keyboard(),
         )
         await query.answer()

@@ -13,17 +13,27 @@ emoji premium que el owner (con Premium) haya usado al definir un mensaje
 recurrente se conserva perfectamente.
 
 También incluye la sintaxis simple de botones en línea usada en el menú
-de mensajes recurrentes:
+de mensajes recurrentes y en el compositor de anuncios:
 
     Texto del botón - https://enlace.com
     Botón A - https://a.com | Botón B - https://b.com
 
 Cada línea es una fila del teclado; separar varios botones de la misma
 fila con " | ".
+
+Colores de botón (desde Bot API 9.4, feb 2026): se puede anteponer una
+etiqueta de color entre corchetes antes del texto del botón:
+
+    [rojo] Cancelar - https://a.com
+    [verde] Confirmar - https://b.com | [azul] Info - https://c.com
+
+Si no se pone ninguna etiqueta, el botón queda con el estilo por defecto
+de Telegram (gris/celeste, según el cliente).
 """
 from __future__ import annotations
 
 import json
+import re
 from typing import Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
@@ -83,8 +93,22 @@ def count_premium_emojis(entities: Optional[list[MessageEntity]]) -> int:
 # --------------------------------------------------------------------- #
 # Botones en línea
 # --------------------------------------------------------------------- #
+# Alias en español/inglés -> valor real que espera la Bot API (Bot API
+# 9.4+): 'primary' (azul), 'success' (verde), 'danger' (rojo).
+BUTTON_COLOR_ALIASES = {
+    "rojo": "danger", "red": "danger", "danger": "danger",
+    "verde": "success", "green": "success", "success": "success",
+    "azul": "primary", "blue": "primary", "primary": "primary",
+}
+BUTTON_COLOR_EMOJI = {"danger": "🔴", "success": "🟢", "primary": "🔵"}
+_COLOR_TAG_RE = re.compile(r"^\[\s*(\w+)\s*\]\s*")
+
+
 def parse_buttons_text(text: str) -> tuple[list[list[dict]], list[str]]:
-    """Convierte texto plano en filas de botones. Devuelve (filas, errores)."""
+    """Convierte texto plano en filas de botones. Devuelve (filas, errores).
+    Acepta un color opcional al principio de cada botón, entre corchetes:
+    '[rojo] Texto - url'. Ver BUTTON_COLOR_ALIASES para las palabras
+    válidas (rojo/red/danger, verde/green/success, azul/blue/primary)."""
     rows: list[list[dict]] = []
     errors: list[str] = []
     for raw_line in text.splitlines():
@@ -96,6 +120,20 @@ def parse_buttons_text(text: str) -> tuple[list[list[dict]], list[str]]:
             raw_btn = raw_btn.strip()
             if not raw_btn:
                 continue
+
+            style = None
+            match = _COLOR_TAG_RE.match(raw_btn)
+            if match:
+                tag = match.group(1).lower()
+                if tag in BUTTON_COLOR_ALIASES:
+                    style = BUTTON_COLOR_ALIASES[tag]
+                    raw_btn = raw_btn[match.end():].strip()
+                else:
+                    errors.append(
+                        f"«[{match.group(1)}]» no es un color válido. Usá rojo, verde o azul."
+                    )
+                    continue
+
             if " - " not in raw_btn:
                 errors.append(f"«{raw_btn}» — falta \" - \" entre el texto y el enlace.")
                 continue
@@ -107,7 +145,10 @@ def parse_buttons_text(text: str) -> tuple[list[list[dict]], list[str]]:
             if not (url.startswith("http://") or url.startswith("https://") or url.startswith("tg://")):
                 errors.append(f"«{label}» — el enlace debe empezar con http://, https:// o tg://.")
                 continue
-            row.append({"text": label, "url": url})
+            btn = {"text": label, "url": url}
+            if style:
+                btn["style"] = style
+            row.append(btn)
         if row:
             rows.append(row)
     return rows, errors
@@ -129,7 +170,10 @@ def json_to_buttons(raw: Optional[str]) -> list[list[dict]]:
 def build_inline_keyboard(rows: list[list[dict]]) -> Optional[InlineKeyboardMarkup]:
     if not rows:
         return None
-    keyboard = [[InlineKeyboardButton(b["text"], url=b["url"]) for b in row] for row in rows]
+    keyboard = [
+        [InlineKeyboardButton(b["text"], url=b["url"], style=b.get("style")) for b in row]
+        for row in rows
+    ]
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -138,5 +182,10 @@ def describe_buttons(rows: list[list[dict]]) -> str:
         return "Sin botones."
     lines = []
     for row in rows:
-        lines.append(" | ".join(f"{b['text']} → {b['url']}" for b in row))
+        parts = []
+        for b in row:
+            emoji = BUTTON_COLOR_EMOJI.get(b.get("style"), "")
+            prefix = f"{emoji} " if emoji else ""
+            parts.append(f"{prefix}{b['text']} → {b['url']}")
+        lines.append(" | ".join(parts))
     return "\n".join(lines)
