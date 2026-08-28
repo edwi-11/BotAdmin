@@ -1,72 +1,43 @@
-Archivos modificados / creados — resumen rápido
-=================================================
+Cambios de esta tanda (4 archivos)
+===================================
 
-Estos son SOLO los archivos que toqué durante toda la conversación.
-Reemplazan al archivo del mismo nombre/ruta en tu proyecto; el resto de
-tu proyecto (economía, filtros, moderación, gemini, etc.) no se toca.
+1. handlers/owner_groups.py  (REESCRITO)
+   - /grupos ahora es un menú paginado: botones "⬅️ Anterior" /
+     "Siguiente ➡️" para recorrer todos los grupos (6 por página) en vez
+     de mandar todo en mensajes larguísimos de una sola vez.
+   - Botón "🔄 Actualizar" para volver a consultar el estado real contra
+     Telegram cuando quieras.
+   - El link de invitación de cada grupo se pide recién cuando esa
+     página se muestra (y se cachea), para que navegar sea rápido.
 
-1. utils/groups.py            (MODIFICADO)
-   - Verificación real de grupos contra Telegram: estado activo /
-     expulsado / sin acceso, cantidad de miembros, ya no descarta
-     grupos en silencio por errores transitorios.
+2. main.py  (MODIFICADO)
+   - El envío de anuncios ahora manda un mensaje de progreso en vivo al
+     propietario que armó el anuncio (por privado, desde el bot de
+     moderación), y lo va editando cada 10 envíos: "15/120 — ✅ 14
+     enviados, ⚠️ 1 fallido". Al terminar, edita ese mismo mensaje con el
+     resumen final.
+   - Si el anuncio tiene "fijar" activado, después de mandar cada copia
+     intenta fijarla en ese chat/grupo (silenciosa o con notificación,
+     según se haya elegido al armar el anuncio). Si no se puede fijar en
+     algún lugar puntual (el bot no es admin ahí), no cuenta como un
+     envío fallido — el mensaje sí se mandó, solo no se pudo fijar.
 
-2. handlers/owner_groups.py   (MODIFICADO)
-   - /grupos ahora muestra nombre, ID, cantidad de miembros y estado de
-     cada grupo (antes solo mostraba nombre + link).
+3. database.py  (MODIFICADO)
+   - Nuevas columnas en broadcast_queue: pin_enabled, pin_silent (para
+     que el bot de anuncios pueda pedir fijar o no, y con/sin
+     notificación).
+   - create_broadcast() y BroadcastMessage actualizados para
+     leer/escribir esas columnas nuevas.
 
-3. database.py                (MODIFICADO)
-   - Limpieza defensiva de duplicados en known_groups al iniciar.
-   - Backfill automático de títulos de grupo faltantes, tomándolos de
-     mod_logs / reports / captcha_state si existen ahí.
-
-4. main.py                    (MODIFICADO)
-   - El job de envío de anuncios ahora borra de known_groups un grupo
-     apenas confirma que el bot ya no tiene acceso (Forbidden), en vez
-     de dejarlo "fantasma" hasta la próxima vez que se use /grupos.
-
-5. handlers/captcha.py        (MODIFICADO)
-   - Si no se puede borrar el aviso de "iniciá el chat conmigo" en el
-     grupo (por permisos), como respaldo al menos le saca el botón
-     inline para que no quede un botón activo sin sentido.
-
-6. handlers/greetings.py      (MODIFICADO)
-   - Si la bienvenida es "solo privado" y el DM falla, ya NO se manda
-     ningún aviso de reemplazo en el grupo pidiendo iniciar el bot.
-     Simplemente no se envía nada en ese caso. (El captcha no se tocó,
-     sigue con su propio aviso normalmente.)
-
-7. scripts/verificar_dm.py    (NUEVO)
-   - Script de mantenimiento para correr UNA VEZ a mano (no lo usa el
-     bot solo). Revisa contra Telegram a los usuarios con dm_ok=0/NULL
-     (quedaron así porque esa columna se agregó después de que ya
-     existieran, y SQLite les puso 0 por defecto a todos, aunque
-     muchos sí podían recibir mensajes) y corrige el dato real.
-   - Uso: con el bot detenido, `python scripts/verificar_dm.py`
-
-8. handlers/afk.py             (MODIFICADO)
-   - Bug de compatibilidad con la versión nueva de python-telegram-bot:
-     message.entities ahora devuelve una tupla, no una lista, y el
-     código hacía `(entities or []) + (caption_entities or [])`, que
-     revienta con TypeError en CUALQUIER mensaje con entidades (por
-     ejemplo /start, o cualquier @mención). Esto es lo que estaba
-     tirando abajo las respuestas del bot, no un tema de volumen de
-     mensajes. Arreglado usando tuplas en vez de listas para que
-     funcione sea cual sea el tipo que devuelva la librería.
-
-9. handlers/kang.py             (NUEVO)
-   - Comandos /kang y /steal: respondiendo a un sticker o imagen, lo
-     agrega a un paquete de stickers propio del usuario. Si todavía no
-     tiene paquete de ese tipo (estático/animado/video van en paquetes
-     separados, Telegram no los deja mezclar), el bot lo crea solo, sin
-     pedir nada más. Cuando un paquete llega a 120 figuritas, abre un
-     volumen nuevo automáticamente.
-   - Requiere agregar la tabla `kang_packs` (ver database.py) y que el
-     usuario haya hablado alguna vez por privado con el bot (requisito
-     de Telegram para poder crearle un paquete a nombre suyo) — si no,
-     el bot se lo avisa con un mensaje claro en vez de fallar en
-     silencio.
-   - Se registra en main.py con:
-     application.add_handler(CommandHandler(["kang", "steal"], kang_command))
+4. handlers/broadcast.py  (MODIFICADO — bot ANUNCIADOR, broadcast_bot.py)
+   - En el compositor de anuncios ahora hay un botón "📌 Fijar al enviar:
+     Sí/No", y si está en Sí, otro botón para elegir "🔕 Silenciosa" o
+     "🔔 Con notificación".
+   - En el paso de botones del anuncio, se agregó un tip con círculos de
+     color por emoji (🔴 🟠 🟡 🟢 🔵 🟣 ⚫️ ⚪️ 🟤) para diferenciar botones
+     visualmente — ACLARACIÓN: Telegram no permite pintar los botones de
+     color de verdad (es una limitación de la plataforma, no del bot),
+     esto es la forma más parecida de lograrlo.
 
 IMPORTANTE: este zip NO incluye ningún archivo de base de datos
 (bot.db). Nunca reemplaces database/bot.db con nada de un zip mío —

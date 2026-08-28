@@ -95,7 +95,7 @@ from handlers.recurring import LOCAL_FILE_PREFIX
 from handlers.recurring import _send_content as _send_broadcast_content
 from handlers.recurring import load_all_recurring_jobs, recurring_callback, try_consume_draft_input
 from handlers.quote_sticker import q_command
-from handlers.owner_groups import grupos_command
+from handlers.owner_groups import grupos_callback, grupos_command
 from handlers.remote_control import (
     owner_command,
     owner_select_callback,
@@ -233,9 +233,27 @@ async def _broadcast_dispatch_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             recipients = [gid for gid, _title in groups]
         recipient_kind = "usuario(s)" if is_users else "grupo(s)"
+        total = len(recipients)
+
+        # Mensaje de progreso en vivo, editado a medida que se manda el
+        # anuncio, para que el propietario que lo creó sepa en tiempo real
+        # cuántos van y cuántos faltan (en vez de enterarse recién al
+        # final por el log). Si por algún motivo no se puede mandar (ej.
+        # el propietario nunca abrió un chat privado con ESTE bot en
+        # particular), seguimos igual sin progreso visible.
+        progress_message = None
+        if broadcast.created_by:
+            try:
+                progress_message = await context.bot.send_message(
+                    broadcast.created_by,
+                    f"📤 Enviando anuncio #{broadcast.id} a {total} {recipient_kind}...\n0/{total}",
+                )
+            except TelegramError as exc:
+                logger.info("No pude mandar el progreso del anuncio #%s al propietario: %s", broadcast.id, exc)
 
         sent_count = 0
         failed_count = 0
+        pinned_count = 0
         # El file_id puede venir marcado como archivo local en disco (lo
         # dejó ahí el bot anunciador, porque su file_id no sirve para este
         # bot). Lo subimos una sola vez al primer destinatario y, si
@@ -244,7 +262,7 @@ async def _broadcast_dispatch_job(context: ContextTypes.DEFAULT_TYPE) -> None:
         current_file_ref = broadcast.file_id
         is_local = bool(current_file_ref and current_file_ref.startswith(LOCAL_FILE_PREFIX))
 
-        for recipient_id in recipients:
+        for idx, recipient_id in enumerate(recipients, start=1):
             try:
                 sent = await _send_broadcast_content(
                     context, recipient_id, broadcast.content_type, broadcast.text,
@@ -258,6 +276,21 @@ async def _broadcast_dispatch_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                     if reused:
                         current_file_ref = reused
                         is_local = False
+                if broadcast.pin_enabled:
+                    try:
+                        await context.bot.pin_chat_message(
+                            recipient_id, sent.message_id, disable_notification=broadcast.pin_silent,
+                        )
+                        pinned_count += 1
+                    except TelegramError as exc:
+                        # Fijar es "mejor esfuerzo": si el bot no es admin
+                        # ahí, o no tiene permiso de fijar, el mensaje ya
+                        # se mandó igual, así que no lo contamos como
+                        # fallo del envío.
+                        logger.info(
+                            "No pude fijar el anuncio #%s en %s %s: %s",
+                            broadcast.id, "usuario" if is_users else "grupo", recipient_id, exc,
+                        )
             except Forbidden:
                 # Bloqueo real: nos bloqueó, nunca abrió chat, o se borró la
                 # cuenta. Recién acá dejamos de intentar mandarle privados
@@ -290,6 +323,20 @@ async def _broadcast_dispatch_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 failed_count += 1
                 logger.warning("Anuncio #%s: %s", broadcast.id, exc)
                 break
+
+            # Vamos actualizando el progreso cada 10 envíos (y siempre en
+            # el último) para no gastar de más el límite de ediciones de
+            # Telegram con anuncios grandes.
+            if progress_message and (idx % 10 == 0 or idx == total):
+                try:
+                    await progress_message.edit_text(
+                        f"📤 Enviando anuncio #{broadcast.id} a {total} {recipient_kind}...\n"
+                        f"{idx}/{total} — ✅ {sent_count} enviados, ⚠️ {failed_count} fallidos"
+                        + (f", 📌 {pinned_count} fijados" if broadcast.pin_enabled else ""),
+                    )
+                except TelegramError:
+                    pass  # el progreso es solo informativo, si falla no pasa nada
+
             await asyncio.sleep(BROADCAST_DELAY_BETWEEN_GROUPS)
 
         if broadcast.file_id and broadcast.file_id.startswith(LOCAL_FILE_PREFIX):
@@ -301,6 +348,15 @@ async def _broadcast_dispatch_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 logger.warning("No se pudo borrar el archivo temporal del anuncio #%s: %s", broadcast.id, exc)
 
         await db.mark_broadcast_sent(broadcast.id, sent_count, failed_count)
+        if progress_message:
+            try:
+                await progress_message.edit_text(
+                    f"✅ Anuncio #{broadcast.id} terminado.\n"
+                    f"{sent_count} enviados, {failed_count} fallidos, de {total} {recipient_kind}."
+                    + (f"\n📌 {pinned_count} fijados." if broadcast.pin_enabled else "")
+                )
+            except TelegramError:
+                pass
         logger.info(
             "Anuncio #%s enviado: %d exitosos, %d fallidos de %d %s.",
             broadcast.id, sent_count, failed_count, len(recipients), recipient_kind,
@@ -490,6 +546,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("owner", owner_command))
     application.add_handler(CommandHandler("ready", ready_command))
     application.add_handler(CallbackQueryHandler(owner_select_callback, pattern=r"^remote:"))
+    application.add_handler(CallbackQueryHandler(grupos_callback, pattern=r"^g:"))
     # Máxima prioridad: intercepta los comandos del propietario en privado
     # ANTES que cualquier otro handler, mientras el modo remoto (/owner)
     # esté activo, y los reenvía al grupo elegido.

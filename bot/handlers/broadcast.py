@@ -67,7 +67,7 @@ def _new_draft() -> dict:
         "content_type": "text", "text": None, "entities_json": "[]",
         "file_id": None, "buttons_json": "[]", "awaiting": None,
         "menu_chat_id": None, "menu_message_id": None, "send_target": "groups",
-        "selected_groups": [],
+        "selected_groups": [], "pin_enabled": False, "pin_silent": True,
     }
 
 
@@ -123,6 +123,8 @@ def _draft_view(draft: dict) -> tuple[str, InlineKeyboardMarkup]:
     text_status = ("Definido" if draft.get("text") else "No definido") if content_type == "text" \
         else ("Con descripción" if draft.get("text") else "Sin descripción")
     buttons_desc = describe_buttons(json_to_buttons(draft["buttons_json"]))
+    pin_status = "Sí" if draft.get("pin_enabled") else "No"
+    pin_silent_status = "Silenciosa 🔕" if draft.get("pin_silent", True) else "Con notificación 🔔"
 
     text = "\n".join([
         "📢 *Compositor de anuncio*",
@@ -135,11 +137,22 @@ def _draft_view(draft: dict) -> tuple[str, InlineKeyboardMarkup]:
         f"📷 Multimedia: *{escape_md(media_status)}*",
         f"📝 Texto: *{escape_md(text_status)}*",
         f"🔘 Botones:\n{escape_md(buttons_desc)}",
+        f"📌 Fijar al enviar: *{escape_md(pin_status)}*"
+        + (f" \\({escape_md(pin_silent_status)}\\)" if draft.get("pin_enabled") else ""),
     ])
     rows = [
         [InlineKeyboardButton(f"📷 Multimedia: {media_status}", callback_data="b:media")],
         [InlineKeyboardButton(f"📝 Texto: {text_status}", callback_data="b:text")],
         [InlineKeyboardButton("🔘 Botones", callback_data="b:buttons")],
+    ]
+    pin_row = [InlineKeyboardButton(f"📌 Fijar al enviar: {pin_status}", callback_data="b:togglepin")]
+    if draft.get("pin_enabled"):
+        pin_row.append(InlineKeyboardButton(
+            "🔕 Silenciosa" if draft.get("pin_silent", True) else "🔔 Con notificación",
+            callback_data="b:togglepinsilent",
+        ))
+    rows.append(pin_row)
+    rows += [
         [InlineKeyboardButton("👁 Vista previa", callback_data="b:preview")],
         [InlineKeyboardButton("📢 Enviar a todos los grupos", callback_data="b:sendask:groups")],
         [InlineKeyboardButton("🎯 Enviar a grupos específicos", callback_data="b:selgrp:0")],
@@ -262,11 +275,29 @@ async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.answer()
         return
 
+    if action == "togglepin":
+        draft["pin_enabled"] = not draft.get("pin_enabled", False)
+        await _render_draft(context, draft)
+        await query.answer("📌 Se va a fijar en cada chat." if draft["pin_enabled"] else "Ya no se fija.")
+        return
+
+    if action == "togglepinsilent":
+        draft["pin_silent"] = not draft.get("pin_silent", True)
+        await _render_draft(context, draft)
+        await query.answer("🔕 Fijado silencioso." if draft["pin_silent"] else "🔔 Fijado con notificación.")
+        return
+
     if action == "buttons":
         draft["awaiting"] = "buttons"
         await query.edit_message_text(
             "🔘 Envía los botones \\(mismo formato que en el bot de moderación\\), "
-            "o `no` para quitarlos:\n\n`Texto - https://enlace.com`",
+            "o `no` para quitarlos:\n\n`Texto - https://enlace.com`\n\n"
+            "💡 *Tip:* Telegram no permite pintar los botones de color, pero podés "
+            "poner un círculo de color adelante del texto para diferenciarlos a "
+            "simple vista, por ejemplo:\n"
+            "`🔴 Cerrar - https://enlace.com`\n"
+            "`🟢 Confirmar - https://enlace.com`\n\n"
+            "Colores disponibles: 🔴 🟠 🟡 🟢 🔵 🟣 ⚫️ ⚪️ 🟤",
             parse_mode=ParseMode.MARKDOWN_V2, reply_markup=_cancel_field_keyboard(),
         )
         await query.answer()
@@ -381,6 +412,7 @@ async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             entities=draft["entities_json"], file_id=file_ref,
             buttons=draft["buttons_json"], created_by=user.id, target=target,
             target_group_ids=json.dumps(draft["selected_groups"]) if target == "specific" else "[]",
+            pin_enabled=draft.get("pin_enabled", False), pin_silent=draft.get("pin_silent", True),
         )
         context.user_data.pop("broadcast_draft", None)
         destino = {

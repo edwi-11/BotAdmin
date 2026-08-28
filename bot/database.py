@@ -383,6 +383,10 @@ _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         # JSON con la lista de group_id elegidos, solo se usa cuando
         # target = 'specific'.
         ("target_group_ids", "TEXT NOT NULL DEFAULT '[]'"),
+        # 1 = fijar el mensaje apenas se manda en cada grupo/chat.
+        ("pin_enabled", "INTEGER NOT NULL DEFAULT 0"),
+        # 1 = fijar SIN notificar (silencioso); 0 = fijar notificando.
+        ("pin_silent", "INTEGER NOT NULL DEFAULT 1"),
     ],
     "join_requests": [
         # 1 = ya le mandamos la bienvenida privada apenas mandó la
@@ -547,6 +551,8 @@ class BroadcastMessage:
     failed_count: int
     target: str = "groups"  # groups | users | specific
     target_group_ids: str = "[]"
+    pin_enabled: bool = False
+    pin_silent: bool = True
 
 
 def _row_to_broadcast(row: aiosqlite.Row) -> BroadcastMessage:
@@ -558,6 +564,8 @@ def _row_to_broadcast(row: aiosqlite.Row) -> BroadcastMessage:
         sent_at=row["sent_at"], sent_count=row["sent_count"], failed_count=row["failed_count"],
         target=(row["target"] if "target" in keys and row["target"] else "groups"),
         target_group_ids=(row["target_group_ids"] if "target_group_ids" in keys and row["target_group_ids"] else "[]"),
+        pin_enabled=bool(row["pin_enabled"]) if "pin_enabled" in keys and row["pin_enabled"] is not None else False,
+        pin_silent=bool(row["pin_silent"]) if "pin_silent" in keys and row["pin_silent"] is not None else True,
     )
 
 
@@ -1609,15 +1617,19 @@ class Database:
     async def create_broadcast(
         self, content_type: str, text: Optional[str], entities: str,
         file_id: Optional[str], buttons: str, created_by: int, target: str = "groups",
-        target_group_ids: str = "[]",
+        target_group_ids: str = "[]", pin_enabled: bool = False, pin_silent: bool = True,
     ) -> int:
         cursor = await self.conn.execute(
             """
             INSERT INTO broadcast_queue
-                (content_type, text, entities, file_id, buttons, status, created_by, created_at, target, target_group_ids)
-            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+                (content_type, text, entities, file_id, buttons, status, created_by, created_at,
+                 target, target_group_ids, pin_enabled, pin_silent)
+            VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
             """,
-            (content_type, text, entities, file_id, buttons, created_by, int(time.time()), target, target_group_ids),
+            (
+                content_type, text, entities, file_id, buttons, created_by, int(time.time()),
+                target, target_group_ids, int(pin_enabled), int(pin_silent),
+            ),
         )
         await self.conn.commit()
         return cursor.lastrowid
