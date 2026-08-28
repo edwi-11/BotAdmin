@@ -25,8 +25,10 @@ from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
+from config import settings
 from database import Database
 from utils.callbacks import safe_callback
+from utils.ephemeral import send_ephemeral_notice
 from utils.formatting import error, escape_md, humanize_seconds, mention, success
 from utils.permissions import is_chat_admin, is_owner
 
@@ -399,7 +401,7 @@ async def check_banned_words(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except TelegramError:
             pass
 
-    action_taken = "Se eliminó el mensaje" if settings.filter_delete else "Se detectó el mensaje"
+    action_taken = "Se eliminó tu mensaje" if settings.filter_delete else "Se detectó tu mensaje"
 
     try:
         if settings.filter_punishment == "mute":
@@ -416,32 +418,46 @@ async def check_banned_words(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"por {humanize_seconds(settings.filter_mute_seconds)}"
             notice = (
                 f"🚫 *Palabra prohibida detectada*\n"
-                f"{action_taken} de {mention(user.id, user.first_name)}\\.\n"
-                f"🔇 Silenciado {escape_md(duration_text)}\\."
+                f"{action_taken} por contener una palabra prohibida en este grupo\\.\n"
+                f"🔇 Quedaste silenciado {escape_md(duration_text)}\\."
             )
         elif settings.filter_punishment == "ban":
             await context.bot.ban_chat_member(chat.id, user.id)
             notice = (
                 f"🚫 *Palabra prohibida detectada*\n"
-                f"{action_taken} de {mention(user.id, user.first_name)}\\.\n"
-                f"🔨 Usuario baneado\\."
+                f"{action_taken} por contener una palabra prohibida en este grupo\\.\n"
+                f"🔨 Quedaste baneado del grupo\\."
             )
         else:
             notice = (
                 f"🚫 *Palabra prohibida detectada*\n"
-                f"{action_taken} de {mention(user.id, user.first_name)}\\."
+                f"{action_taken} por contener una palabra prohibida en este grupo\\."
             )
     except TelegramError as exc:
         logger.warning("No se pudo aplicar el castigo del filtro en %s: %s", chat.id, exc)
         notice = (
             f"🚫 *Palabra prohibida detectada*\n"
-            f"{action_taken} de {mention(user.id, user.first_name)}\\."
+            f"{action_taken} por contener una palabra prohibida en este grupo\\."
         )
 
     await db.add_log("filtro_palabras", context.bot.id, "Filtro automático", user.id,
                       user.first_name, chat.id, chat.title, "Palabra prohibida")
 
-    try:
-        await context.bot.send_message(chat.id, notice, parse_mode=ParseMode.MARKDOWN_V2)
-    except TelegramError:
-        pass
+    # Aviso EFÍMERO (novedad de Telegram, agosto 2026): solo lo ve la
+    # persona afectada, no ensucia el chat para el resto del grupo. Si el
+    # servidor de Bot API en uso todavía no soporta esto (por ejemplo, un
+    # Local Bot API Server desactualizado), send_ephemeral_notice devuelve
+    # None y caemos de vuelta al aviso público de siempre para no dejar a
+    # nadie sin explicación.
+    sent = await send_ephemeral_notice(
+        settings.bot_token, chat.id, user.id, notice, parse_mode=ParseMode.MARKDOWN_V2,
+    )
+    if sent is None:
+        try:
+            await context.bot.send_message(
+                chat.id,
+                f"{notice}\n_\\(para {mention(user.id, user.first_name)}\\)_",
+                parse_mode=ParseMode.MARKDOWN_V2,
+            )
+        except TelegramError:
+            pass

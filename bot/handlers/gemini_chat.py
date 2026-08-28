@@ -37,21 +37,32 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import re
 import tempfile
+import time
 import uuid
 from pathlib import Path
+from typing import AsyncIterator
 
 import httpx
 from telegram import Update
 from telegram.constants import ChatAction, ChatType
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes
 
 from config import settings
 from database import Database
 
 logger = logging.getLogger(__name__)
+
+# Cada cuánto (segundos) se actualiza el mensaje mientras se "escribe en
+# vivo". Menos que esto y arriesgamos pegarle demasiado rápido a los
+# límites de edición de Telegram; más y se ve menos fluido.
+_STREAM_EDIT_THROTTLE = 1.2
+# Tope de caracteres por edición (Telegram permite hasta 4096 por mensaje).
+_STREAM_MAX_CHARS = 4000
 
 # Dispara con "ceo" al INICIO del mensaje (mayúsc/minúsc, con o sin coma/
 # dos puntos después: "ceo,", "ceo:", "ceo que hora es...").
@@ -207,6 +218,134 @@ async def _ask_ai(prompt: str, history: list[dict[str, str]] | None = None) -> s
 
 
 # --------------------------------------------------------------------- #
+# Streaming de texto (respuesta "en vivo", como se escribe)
+# --------------------------------------------------------------------- #
+# Nota: Telegram agregó en marzo 2026 (Bot API 9.5) el método nativo
+# sendMessageDraft para streaming, pero según la propia documentación de
+# Telegram ese método solo sirve en chats privados; en grupos (que es
+# donde vive "ceo") la manera soportada de simular streaming sigue siendo
+# ir editando un mismo mensaje con editMessageText a medida que llegan
+# pedazos de texto. Por eso acá no usamos sendMessageDraft: en vez de eso,
+# consumimos el endpoint de streaming (SSE) de Gemini/Groq y vamos
+# editando el mensaje ya enviado.
+async def _stream_gemini(prompt: str, history: list[dict[str, str]] | None = None) -> AsyncIterator[str]:
+    contents = [
+        {"role": turn["role"], "parts": [{"text": turn["text"]}]}
+        for turn in (history or [])
+    ]
+    contents.append({"role": "user", "parts": [{"text": prompt}]})
+
+    payload = {
+        "system_instruction": {"parts": [{"text": _SYSTEM_PROMPT}]},
+        "contents": contents,
+        "generationConfig": {"temperature": 0.9, "maxOutputTokens": 1000},
+    }
+    url = _GEMINI_URL_TEMPLATE.format(model=settings.gemini_model) + ":streamGenerateContent"
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        async with client.stream(
+            "POST", url,
+            params={"key": settings.gemini_api_key, "alt": "sse"},
+            json=payload,
+        ) as resp:
+            if resp.status_code >= 400:
+                body = await resp.aread()
+                raise GeminiError(f"Gemini streaming devolvió {resp.status_code}: {body[:300]!r}")
+
+            async for line in resp.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                chunk_raw = line[len("data:"):].strip()
+                if not chunk_raw or chunk_raw == "[DONE]":
+                    continue
+                try:
+                    chunk = json.loads(chunk_raw)
+                except json.JSONDecodeError:
+                    continue
+                try:
+                    candidate = chunk["candidates"][0]
+                    parts = candidate.get("content", {}).get("parts", [])
+                    text = "".join(p.get("text", "") for p in parts)
+                except (KeyError, IndexError, TypeError):
+                    text = ""
+                if text:
+                    yield text
+
+
+async def _stream_groq(prompt: str, history: list[dict[str, str]] | None = None) -> AsyncIterator[str]:
+    if not settings.groq_api_key:
+        raise GeminiError("Groq no está configurado (falta GROQ_API_KEY en el .env)")
+
+    messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
+    for turn in (history or []):
+        role = "assistant" if turn["role"] == "model" else "user"
+        messages.append({"role": role, "content": turn["text"]})
+    messages.append({"role": "user", "content": prompt})
+
+    payload = {
+        "model": settings.groq_model,
+        "messages": messages,
+        "temperature": 0.9,
+        "max_tokens": 1000,
+        "stream": True,
+    }
+    headers = {"Authorization": f"Bearer {settings.groq_api_key}"}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        async with client.stream("POST", _GROQ_URL, headers=headers, json=payload) as resp:
+            if resp.status_code >= 400:
+                body = await resp.aread()
+                raise GeminiError(f"Groq streaming devolvió {resp.status_code}: {body[:300]!r}")
+
+            async for line in resp.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                chunk_raw = line[len("data:"):].strip()
+                if not chunk_raw or chunk_raw == "[DONE]":
+                    continue
+                try:
+                    chunk = json.loads(chunk_raw)
+                except json.JSONDecodeError:
+                    continue
+                try:
+                    delta = chunk["choices"][0]["delta"].get("content") or ""
+                except (KeyError, IndexError, TypeError):
+                    delta = ""
+                if delta:
+                    yield delta
+
+
+async def _stream_ai(prompt: str, history: list[dict[str, str]] | None = None) -> AsyncIterator[str]:
+    """Igual que `_ask_ai` (Gemini primero, Groq de respaldo) pero
+    entregando el texto en pedazos a medida que va llegando, para poder
+    editar el mensaje en vivo. Si Gemini falla ANTES de soltar el primer
+    pedazo, se reintenta completo con Groq (streaming también). Si Gemini
+    falla a medias (ya se mostró texto parcial), se corta ahí -- no tiene
+    sentido reiniciar con otro modelo cuando el usuario ya está viendo una
+    respuesta a medio escribir.
+    """
+    if not settings.gemini_api_key:
+        async for delta in _stream_groq(prompt, history):
+            yield delta
+        return
+
+    got_any = False
+    try:
+        async for delta in _stream_gemini(prompt, history):
+            got_any = True
+            yield delta
+    except Exception as exc:  # noqa: BLE001
+        if got_any:
+            logger.warning("El streaming de Gemini se cortó a medias: %s", exc)
+            return
+        if not settings.groq_api_key:
+            raise
+        logger.info("Gemini falló antes de responder (%s), reintentando con Groq...", exc)
+        async for delta in _stream_groq(prompt, history):
+            yield delta
+
+
+# --------------------------------------------------------------------- #
 # Audio (texto a voz)
 # --------------------------------------------------------------------- #
 def _parse_sample_rate(mime_type: str) -> int:
@@ -331,7 +470,8 @@ async def ceo_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await _handle_audio_request(update, context, text_to_speak)
         return
 
-    # Chat normal de texto
+    # Chat normal de texto: la respuesta se va mostrando en vivo, editando
+    # el mismo mensaje a medida que llegan pedazos de texto (streaming).
     question = remainder or "Salúdame brevemente y pregúntame en qué puedes ayudar."
     user_id = update.effective_user.id if update.effective_user else 0
     history = _get_history(chat.id, user_id)
@@ -341,12 +481,58 @@ async def ceo_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     except Exception:  # noqa: BLE001
         pass
 
+    placeholder = await message.reply_text("💭")
+
+    buffer = ""
+    last_shown: str | None = None
+    last_edit = 0.0
+
+    async def _flush(final: bool = False) -> None:
+        nonlocal last_shown, last_edit
+        shown = buffer[:_STREAM_MAX_CHARS]
+        text_to_send = shown if final else f"{shown}▌"
+        if text_to_send == last_shown:
+            return
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat.id, message_id=placeholder.message_id, text=text_to_send,
+            )
+            last_shown = text_to_send
+            last_edit = time.monotonic()
+        except BadRequest as exc:
+            if "not modified" not in str(exc).lower():
+                logger.debug("No se pudo editar el mensaje en streaming: %s", exc)
+        except TelegramError as exc:
+            logger.debug("No se pudo editar el mensaje en streaming: %s", exc)
+
     try:
-        answer = await _ask_ai(question, history)
+        async for delta in _stream_ai(question, history):
+            buffer += delta
+            if time.monotonic() - last_edit >= _STREAM_EDIT_THROTTLE:
+                await _flush()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Error consultando la IA (Gemini + Groq): %s", exc)
-        await message.reply_text("😅 Se me trabó la cabeza justo ahora, intenta de nuevo en un ratito.")
-        return
+        if not buffer:
+            logger.warning("Error consultando la IA (Gemini + Groq): %s", exc)
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat.id, message_id=placeholder.message_id,
+                    text="😅 Se me trabó la cabeza justo ahora, intenta de nuevo en un ratito.",
+                )
+            except TelegramError:
+                pass
+            return
+        logger.warning("La respuesta se cortó a medias: %s", exc)
+
+    answer = buffer.strip()
+    if not answer:
+        answer = "😅 No me salió nada, intenta de nuevo en un ratito."
+    await _flush(final=True)
+    if len(answer) > _STREAM_MAX_CHARS:
+        # Si se pasó del límite que mostramos en vivo, mandamos el resto
+        # como mensaje(s) aparte para no perder texto.
+        try:
+            await message.reply_text(answer[_STREAM_MAX_CHARS:])
+        except TelegramError:
+            pass
 
     _push_history(chat.id, user_id, question, answer)
-    await message.reply_text(answer)
