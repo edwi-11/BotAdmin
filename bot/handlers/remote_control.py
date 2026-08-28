@@ -7,6 +7,8 @@ handlers/remote_control.py
            efecto (banear, mutear, fijar, mandar mensajes, /q, lo que sea)
            ocurre ahí — sin que el propietario tenga que estar escribiendo
            en el grupo.
+           También se puede saltear los botones pasando el ID del grupo
+           directo: /owner -1001234567890
 /ready  — apaga el modo remoto. Los comandos por privado vuelven a
            contestarte solo a vos, como siempre.
 
@@ -33,7 +35,7 @@ from __future__ import annotations
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.constants import MessageEntityType
+from telegram.constants import ChatType, MessageEntityType
 from telegram.error import TelegramError
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
@@ -56,6 +58,39 @@ def _targets(context: ContextTypes.DEFAULT_TYPE) -> dict[int, tuple[int, str]]:
     return context.application.bot_data.setdefault(_REMOTE_KEY, {})
 
 
+async def _activate_remote(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, group_id: int
+) -> None:
+    """Activa el modo remoto directo sobre group_id, verificando primero
+    contra Telegram que el bot sigue siendo miembro de ese chat y que es
+    realmente un grupo (no un canal ni un privado)."""
+    message = update.effective_message
+    user = update.effective_user
+
+    try:
+        chat = await context.bot.get_chat(group_id)
+    except TelegramError as exc:
+        await message.reply_text(
+            error(f"No pude acceder al grupo {group_id}: {exc}. Revisá el ID con /grupos.")
+        )
+        return
+
+    if chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+        await message.reply_text(error(f"{group_id} no es un grupo (es {chat.type}), no puedo activar el modo remoto ahí."))
+        return
+
+    title = chat.title or f"Grupo {group_id}"
+    _targets(context)[user.id] = (group_id, title)
+    await message.reply_text(
+        f"🎮 <b>Modo remoto activado</b> en <b>{title}</b>.\n\n"
+        "A partir de ahora, cualquier comando que me mandes por acá (privado) "
+        "se va a ejecutar ahí adentro: banear, mutear, fijar, /q, lo que "
+        "necesites.\n\n"
+        "Escribí /ready cuando quieras dejar de usarlo.",
+        parse_mode="HTML",
+    )
+
+
 # --------------------------------------------------------------------- #
 # /owner — elegir grupo
 # --------------------------------------------------------------------- #
@@ -65,6 +100,20 @@ async def owner_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     if not is_owner(user.id):
         await message.reply_text(error("Este comando es solo para el propietario del bot."))
+        return
+
+    # Atajo: /owner -1001234567890 activa el modo remoto directo en ese
+    # grupo, sin pasar por los botones.
+    if context.args:
+        raw = context.args[0].strip()
+        try:
+            group_id = int(raw)
+        except ValueError:
+            await message.reply_text(
+                error(f"'{raw}' no es un ID de grupo válido. Tiene que ser un número (lo sacás de /grupos).")
+            )
+            return
+        await _activate_remote(update, context, group_id)
         return
 
     db: Database = context.application.bot_data["db"]
@@ -82,7 +131,8 @@ async def owner_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"🎮 Ahora mismo estás controlando <b>{active[1]}</b>.\n\n" if active else ""
     )
     await message.reply_text(
-        f"{header}🎮 <b>Modo remoto</b>\nElegí en qué grupo querés que actúen tus próximos comandos:",
+        f"{header}🎮 <b>Modo remoto</b>\nElegí en qué grupo querés que actúen tus próximos comandos "
+        "(o mandá /owner &lt;id_del_grupo&gt; directo la próxima vez):",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(buttons),
     )
