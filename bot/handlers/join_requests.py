@@ -36,6 +36,7 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from database import Database
+from handlers.federations import enforce_fed_ban_on_join
 from handlers.xmod import apply_extreme_punishment, check_extreme_moderation
 from utils.formatting import error, render_template
 from utils.permissions import check_executor_is_admin
@@ -62,6 +63,16 @@ async def on_chat_join_request(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     db: Database = context.application.bot_data["db"]
     user = request.from_user
+
+    if await enforce_fed_ban_on_join(context, request.chat.id, user.id):
+        # Fbaneado en la federación de este grupo: lo rechazamos directo,
+        # ni se guarda como solicitud pendiente ni se le manda bienvenida.
+        try:
+            await context.bot.decline_chat_join_request(request.chat.id, user.id)
+        except TelegramError as exc:
+            logger.info("No pude rechazar la solicitud de un fbaneado en %s: %s", request.chat.id, exc)
+        return
+
     name = user.first_name or user.username or "Usuario"
     await db.record_join_request(request.chat.id, user.id, name, user.username)
 

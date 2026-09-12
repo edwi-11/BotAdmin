@@ -1,40 +1,80 @@
-Cambios de esta tanda (3 archivos) — color real en los botones
-================================================================
+Sistema completo de Federaciones (Feds) — 5 archivos
+======================================================
 
-Corrección importante: SÍ se puede poner color real a los botones.
-Telegram lo agregó en la Bot API 9.4 (9 de febrero de 2026): 'primary'
-(azul), 'success' (verde), 'danger' (rojo). Tu bot ya tiene la versión de
-la librería (python-telegram-bot 22.8) que lo soporta.
+1. handlers/federations.py  (NUEVO)
+   Todo el sistema: /newfed, /fban, /joinfed, /fchat, /fedpromote,
+   /feddemote, /import, /fbanstat, más el callback de aceptar/rechazar
+   invitaciones a administrar una federación. Documentación detallada
+   de cada comando en los docstrings del archivo.
 
-1. utils/entities.py (MODIFICADO)
-   - parse_buttons_text() ahora acepta una etiqueta de color opcional al
-     principio de cada botón, entre corchetes:
-       [rojo] Cancelar - https://enlace.com
-       [verde] Confirmar - https://enlace.com
-       [azul] Info - https://enlace.com
-     (también funciona con red/green/blue o danger/success/primary
-     directo). Si no ponés etiqueta, el botón queda con el color por
-     defecto de Telegram, como siempre.
-   - build_inline_keyboard() ahora pasa ese color real a Telegram
-     (parámetro `style` de InlineKeyboardButton).
-   - describe_buttons() muestra un emoji del color correspondiente en la
-     vista previa del compositor, para que se vea de un vistazo qué
-     color tiene cada botón antes de mandarlo.
+2. database.py (MODIFICADO)
+   6 tablas nuevas: feds, fed_admins, fed_groups, fed_bans,
+   fed_promote_invites, fed_imports. Y todos los métodos que
+   federations.py necesita (create_fed, get_fed, is_fed_admin,
+   add_fed_ban, get_fed_bans_for_user, etc.) Probé el ciclo completo a
+   mano (crear fed, admins, unir grupos, fban, duplicados rechazados,
+   invitaciones, fchat, importación masiva) — todo funcionando.
 
-2. handlers/broadcast.py (MODIFICADO — bot ANUNCIADOR)
-   - Actualicé las instrucciones de "🔘 Botones" del compositor de
-     anuncios para explicar la sintaxis nueva de colores.
+3. handlers/greetings.py (MODIFICADO — 3 líneas)
+   Antes de dar la bienvenida a alguien que entra a un grupo, se chequea
+   si está fbaneado en la federación de ESE grupo — si es así, se lo
+   banea ahí mismo al toque y no se le da la bienvenida.
 
-3. handlers/recurring.py (MODIFICADO — bot de moderación, mensajes
-   recurrentes)
-   - Mismo cambio de instrucciones, para que sea consistente: como los
-     mensajes recurrentes usan el mismo parser de botones, ya podés
-     ponerles color ahí también sin ningún cambio de código adicional.
+4. handlers/join_requests.py (MODIFICADO — mismo chequeo)
+   Mismo chequeo pero para solicitudes de ingreso (grupos con "aprobar
+   nuevos miembros" activado): si está fbaneado, se rechaza la
+   solicitud directo, sin guardarla como pendiente.
 
-No hace falta tocar la base de datos para esto — el color se guarda
-dentro del mismo JSON de botones que ya se guardaba antes (buttons_json),
-solo se le agregó una clave "style" opcional a cada botón.
+5. main.py (MODIFICADO)
+   Se registran los 8 comandos + el callback de invitaciones + las
+   entradas en el menú de comandos del bot (BotCommand) + el wizard de
+   /newfed (pide el nombre por texto) enganchado al router de mensajes
+   ya existente.
+
+CÓMO FUNCIONA CADA COSA (resumen rápido; el detalle completo está en
+los docstrings de federations.py):
+
+- /newfed: te pregunta el nombre, genera un ID único (FED-XXXXXX) y
+  sos el creador automáticamente.
+- /fban usuario motivo (o respondiendo a un mensaje: /fban motivo):
+  banea YA MISMO en todos los grupos que ya pertenezcan a la
+  federación. Manda el aviso al grupo donde se ejecutó, al FChat (si
+  hay uno configurado), y una copia extra al privado del creador SOLO
+  si fue el creador quien lo ejecutó desde un grupo (para que se entere
+  aunque no esté mirando ese grupo en particular).
+- /joinfed IDFed (dentro del grupo a vincular, solo el creador): además
+  de vincular el grupo, sincroniza al revés — aplica ahí mismo todos
+  los baneos que ya tenía la federación.
+- /fchat IDFed (dentro del chat que querés usar como FChat, solo el
+  creador).
+- /fedpromote usuario: le manda un mensaje privado con botones
+  Aceptar/Rechazar — no se agrega como admin de fed hasta que acepte.
+- /feddemote usuario: le saca la administración (el creador nunca se
+  puede remover así).
+- /import (respondiendo a un .csv): acepta encabezados de columna en
+  cualquier mayúscula/minúscula y varios nombres posibles (user_id,
+  userid, id / username, user / reason, motivo), para poder importar
+  CSVs exportados de otros bots sin tener que acomodarlos a mano
+  primero. Los inválidos/duplicados se cuentan y se muestran, pero no
+  frenan el resto de la importación.
+- /fbanstat: en grupos, solo administradores; en privado, cualquiera.
+  Sin especificar federación, muestra TODAS donde está baneado; con
+  usuario + IDFed, muestra el detalle completo con el origen (manual vs
+  importado).
+
+DECISIÓN DE DISEÑO importante para que lo sepas: una importación masiva
+por CSV (que puede traer miles de registros) NO intenta banear a todos
+esos usuarios en todos los grupos de la federación en el momento de
+importar — sería una cantidad enorme de llamadas a la API de Telegram
+de una sola vez y probablemente terminaría en rate-limit. En cambio,
+quedan guardados como fbaneados, y el chequeo automático al entrar a
+cualquier grupo de la federación (greetings.py / join_requests.py) los
+agarra apenas alguno de ellos intente volver a entrar. Los fban
+individuales con /fban SÍ se aplican de inmediato a todos los grupos,
+porque ahí se trata de una sola persona, no miles.
 
 IMPORTANTE: este zip NO incluye ningún archivo de base de datos
 (bot.db). Nunca reemplaces database/bot.db con nada de un zip mío —
-esa carpeta es solo tuya, en el VPS.
+esa carpeta es solo tuya, en el VPS. Las 6 tablas nuevas se crean solas
+al arrancar el bot (CREATE TABLE IF NOT EXISTS), no hace falta que
+hagas nada a mano.

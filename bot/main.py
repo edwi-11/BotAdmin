@@ -126,6 +126,18 @@ from handlers.utils_cmds import (
 )
 from handlers.warnings import warnings_callback
 from handlers.xmod import try_consume_pending_xmod_words, xmod_menu_callback
+from handlers.economy import (
+    baloncesto_command, bolos_command, cobrar_command, comprar_command,
+    dardos_command, depositar_command, diario_command, futbol_command,
+    ranking_command, renunciar_command, retirar_command, robar_command,
+    saldo_command, tienda_command, trabajo_command, trabajos_command,
+    tragamonedas_command, transferir_command,
+)
+from handlers.federations import (
+    cancelarfed_command, fban_command, fbanstat_command, fchat_command,
+    feddemote_command, fedpromote_callback, fedpromote_command,
+    import_command, joinfed_command, newfed_command, try_consume_fed_input,
+)
 from utils.logger import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -184,6 +196,14 @@ BOT_COMMANDS = [
     BotCommand("tienda", "Ver la tienda de objetos"),
     BotCommand("comprar", "Comprar un objeto de la tienda"),
     BotCommand("ranking", "Ver el top de más ricos del grupo"),
+    BotCommand("newfed", "Crear una federación"),
+    BotCommand("fban", "Banear a alguien en toda la federación"),
+    BotCommand("joinfed", "Unir este grupo a una federación"),
+    BotCommand("fchat", "Configurar este chat como FChat"),
+    BotCommand("fedpromote", "Invitar a alguien a administrar la federación"),
+    BotCommand("feddemote", "Quitar a alguien de administrador de la federación"),
+    BotCommand("import", "Importar una lista de baneados (.csv)"),
+    BotCommand("fbanstat", "Consultar los baneos de federación de alguien"),
     BotCommand("top", "Ver el top 10 de más mensajes del grupo"),
 ]
 
@@ -422,6 +442,8 @@ async def on_message_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     if await try_consume_pending_birthdate(update, context):
         return
+    if await try_consume_fed_input(update, context):
+        return
     await brb_text_trigger(update, context)
 
 
@@ -591,6 +613,38 @@ def build_application() -> Application:
 
     # --- /top: ranking de mensajes ---
     application.add_handler(CommandHandler("top", top_command))
+
+    # --- Economía (handlers/economy.py) ---
+    application.add_handler(CommandHandler(["saldo", "perfil", "economia"], saldo_command))
+    application.add_handler(CommandHandler("diario", diario_command))
+    application.add_handler(CommandHandler("baloncesto", baloncesto_command))
+    application.add_handler(CommandHandler("futbol", futbol_command))
+    application.add_handler(CommandHandler("dardos", dardos_command))
+    application.add_handler(CommandHandler("bolos", bolos_command))
+    application.add_handler(CommandHandler("tragamonedas", tragamonedas_command))
+    application.add_handler(CommandHandler("trabajos", trabajos_command))
+    application.add_handler(CommandHandler("trabajo", trabajo_command))
+    application.add_handler(CommandHandler("renunciar", renunciar_command))
+    application.add_handler(CommandHandler("cobrar", cobrar_command))
+    application.add_handler(CommandHandler("robar", robar_command))
+    application.add_handler(CommandHandler("transferir", transferir_command))
+    application.add_handler(CommandHandler("depositar", depositar_command))
+    application.add_handler(CommandHandler("retirar", retirar_command))
+    application.add_handler(CommandHandler("tienda", tienda_command))
+    application.add_handler(CommandHandler("comprar", comprar_command))
+    application.add_handler(CommandHandler("ranking", ranking_command))
+
+    # --- Federaciones (handlers/federations.py) ---
+    application.add_handler(CommandHandler("newfed", newfed_command))
+    application.add_handler(CommandHandler("cancelarfed", cancelarfed_command))
+    application.add_handler(CommandHandler("fban", fban_command))
+    application.add_handler(CommandHandler("joinfed", joinfed_command))
+    application.add_handler(CommandHandler("fchat", fchat_command))
+    application.add_handler(CommandHandler("fedpromote", fedpromote_command))
+    application.add_handler(CommandHandler("feddemote", feddemote_command))
+    application.add_handler(CommandHandler("import", import_command))
+    application.add_handler(CommandHandler("fbanstat", fbanstat_command))
+    application.add_handler(CallbackQueryHandler(fedpromote_callback, pattern=r"^fedp:"))
     application.add_handler(CallbackQueryHandler(ranking_callback, pattern=r"^ranking_(today|week|all)$"))
 
     # Router de mensajes libres (texto o media): editor de recurrentes,

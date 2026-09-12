@@ -300,6 +300,95 @@ CREATE TABLE IF NOT EXISTS kang_packs (
     updated_at     INTEGER NOT NULL,
     PRIMARY KEY (user_id, format, volume)
 );
+
+-- Sistema de economía (handlers/economy.py): saldo, banco, XP/nivel,
+-- empleo actual, racha del bono diario y escudo anti-robo. Todo por
+-- grupo, igual que warnings/freed_users: las monedas de un usuario en un
+-- grupo no se comparten con otro grupo.
+CREATE TABLE IF NOT EXISTS economy_profiles (
+    group_id      INTEGER NOT NULL,
+    user_id       INTEGER NOT NULL,
+    balance       INTEGER NOT NULL DEFAULT 0,
+    bank          INTEGER NOT NULL DEFAULT 0,
+    xp            INTEGER NOT NULL DEFAULT 0,
+    job           TEXT,
+    last_daily    INTEGER NOT NULL DEFAULT 0,
+    daily_streak  INTEGER NOT NULL DEFAULT 0,
+    shield_until  INTEGER NOT NULL DEFAULT 0,
+    updated_at    INTEGER NOT NULL,
+    PRIMARY KEY (group_id, user_id)
+);
+
+-- Enfriamientos (cooldowns) genéricos del sistema de economía: un juego
+-- diario, el trabajo, el robo, la inmunidad tras ser robado, etc. Cada
+-- "acción" (game:basket, work, steal, robbed_immunity...) tiene su propio
+-- cooldown independiente por usuario y por grupo.
+CREATE TABLE IF NOT EXISTS economy_cooldowns (
+    group_id   INTEGER NOT NULL,
+    user_id    INTEGER NOT NULL,
+    action     TEXT NOT NULL,
+    last_ts    INTEGER NOT NULL,
+    PRIMARY KEY (group_id, user_id, action)
+);
+
+-- Sistema de Federaciones (handlers/federations.py): ver ese archivo
+-- para la documentación completa de cómo se relacionan estas tablas.
+CREATE TABLE IF NOT EXISTS feds (
+    fed_id      TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    owner_id    INTEGER NOT NULL,
+    fchat_id    INTEGER,
+    created_at  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS fed_admins (
+    fed_id      TEXT NOT NULL,
+    user_id     INTEGER NOT NULL,
+    added_at    INTEGER NOT NULL,
+    PRIMARY KEY (fed_id, user_id)
+);
+
+-- Un grupo pertenece, como mucho, a UNA federación a la vez (igual que
+-- en Rose/otros fed-bots conocidos) — por eso group_id es la PRIMARY KEY,
+-- no (group_id, fed_id).
+CREATE TABLE IF NOT EXISTS fed_groups (
+    group_id    INTEGER PRIMARY KEY,
+    fed_id      TEXT NOT NULL,
+    joined_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fed_groups_fed ON fed_groups (fed_id);
+
+CREATE TABLE IF NOT EXISTS fed_bans (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    fed_id      TEXT NOT NULL,
+    user_id     INTEGER NOT NULL,
+    username    TEXT,
+    first_name  TEXT,
+    reason      TEXT,
+    banned_by   INTEGER NOT NULL,
+    banned_at   INTEGER NOT NULL,
+    imported    INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (fed_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_fed_bans_user ON fed_bans (user_id);
+
+CREATE TABLE IF NOT EXISTS fed_promote_invites (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    fed_id      TEXT NOT NULL,
+    user_id     INTEGER NOT NULL,
+    invited_by  INTEGER NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending',
+    created_at  INTEGER NOT NULL,
+    resolved_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS fed_imports (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    fed_id       TEXT NOT NULL,
+    imported_by  INTEGER NOT NULL,
+    total        INTEGER NOT NULL,
+    imported_at  INTEGER NOT NULL
+);
 """
 
 # Columnas que se añadieron después de la primera versión del esquema.
@@ -524,6 +613,42 @@ class ActivityEntry:
         if self.last_name:
             return f"{self.first_name} {self.last_name}"
         return self.first_name
+
+
+@dataclass(slots=True)
+class EconomyProfile:
+    """Perfil económico de un usuario DENTRO de un grupo puntual (las
+    monedas no se comparten entre grupos distintos, igual que warnings o
+    freed_users). Si el usuario nunca tuvo actividad económica en ese
+    grupo, get_economy() devuelve un perfil "vacío" con estos mismos
+    valores por defecto, sin necesidad de crear la fila hasta que haga
+    falta escribir algo de verdad."""
+    group_id: int
+    user_id: int
+    balance: int = 0
+    bank: int = 0
+    xp: int = 0
+    job: Optional[str] = None
+    last_daily: int = 0
+    daily_streak: int = 0
+    shield_until: int = 0
+
+    @property
+    def level(self) -> int:
+        # 100 XP por nivel, nivel 1 desde 0 XP.
+        return 1 + self.xp // 100
+
+    @property
+    def xp_into_level(self) -> int:
+        return self.xp % 100
+
+
+def _row_to_economy_profile(row: aiosqlite.Row) -> EconomyProfile:
+    return EconomyProfile(
+        group_id=row["group_id"], user_id=row["user_id"], balance=row["balance"],
+        bank=row["bank"], xp=row["xp"], job=row["job"], last_daily=row["last_daily"],
+        daily_streak=row["daily_streak"], shield_until=row["shield_until"],
+    )
 
 
 def _row_to_activity_entry(row: aiosqlite.Row) -> ActivityEntry:
@@ -1586,6 +1711,282 @@ class Database:
             "UPDATE kang_packs SET sticker_count = sticker_count + 1, updated_at = ? "
             "WHERE user_id = ? AND format = ? AND volume = ?",
             (int(time.time()), user_id, fmt, volume),
+        )
+        await self.conn.commit()
+
+    # ------------------------------------------------------------------ #
+    # Economía (handlers/economy.py): saldo, banco, XP, empleo, bono
+    # diario, escudo anti-robo. Todo por (group_id, user_id).
+    # ------------------------------------------------------------------ #
+    async def _ensure_economy_row(self, group_id: int, user_id: int) -> None:
+        await self.conn.execute(
+            "INSERT INTO economy_profiles (group_id, user_id, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(group_id, user_id) DO NOTHING",
+            (group_id, user_id, int(time.time())),
+        )
+
+    async def get_economy(self, group_id: int, user_id: int) -> EconomyProfile:
+        cursor = await self.conn.execute(
+            "SELECT * FROM economy_profiles WHERE group_id = ? AND user_id = ?",
+            (group_id, user_id),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return EconomyProfile(group_id=group_id, user_id=user_id)
+        return _row_to_economy_profile(row)
+
+    async def add_balance(self, group_id: int, user_id: int, delta: int) -> None:
+        await self._ensure_economy_row(group_id, user_id)
+        # El efectivo nunca queda negativo (una multa/robo/compra más
+        # grande que el saldo simplemente lo deja en 0), así no hace
+        # falta que cada llamador valide el resultado a mano.
+        await self.conn.execute(
+            "UPDATE economy_profiles SET balance = MAX(0, balance + ?), updated_at = ? "
+            "WHERE group_id = ? AND user_id = ?",
+            (delta, int(time.time()), group_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def add_xp(self, group_id: int, user_id: int, amount: int) -> None:
+        await self._ensure_economy_row(group_id, user_id)
+        await self.conn.execute(
+            "UPDATE economy_profiles SET xp = MAX(0, xp + ?), updated_at = ? "
+            "WHERE group_id = ? AND user_id = ?",
+            (amount, int(time.time()), group_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def get_cooldown(self, group_id: int, user_id: int, action: str) -> int:
+        cursor = await self.conn.execute(
+            "SELECT last_ts FROM economy_cooldowns WHERE group_id = ? AND user_id = ? AND action = ?",
+            (group_id, user_id, action),
+        )
+        row = await cursor.fetchone()
+        return row["last_ts"] if row else 0
+
+    async def set_cooldown(self, group_id: int, user_id: int, action: str, ts: Optional[int] = None) -> None:
+        if ts is None:
+            ts = int(time.time())
+        await self.conn.execute(
+            "INSERT INTO economy_cooldowns (group_id, user_id, action, last_ts) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(group_id, user_id, action) DO UPDATE SET last_ts = excluded.last_ts",
+            (group_id, user_id, action, ts),
+        )
+        await self.conn.commit()
+
+    async def set_daily(self, group_id: int, user_id: int, streak: int, ts: int) -> None:
+        await self._ensure_economy_row(group_id, user_id)
+        await self.conn.execute(
+            "UPDATE economy_profiles SET daily_streak = ?, last_daily = ?, updated_at = ? "
+            "WHERE group_id = ? AND user_id = ?",
+            (streak, ts, int(time.time()), group_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def set_job(self, group_id: int, user_id: int, job: Optional[str]) -> None:
+        await self._ensure_economy_row(group_id, user_id)
+        await self.conn.execute(
+            "UPDATE economy_profiles SET job = ?, updated_at = ? WHERE group_id = ? AND user_id = ?",
+            (job, int(time.time()), group_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def set_shield(self, group_id: int, user_id: int, until_ts: int) -> None:
+        await self._ensure_economy_row(group_id, user_id)
+        await self.conn.execute(
+            "UPDATE economy_profiles SET shield_until = ?, updated_at = ? WHERE group_id = ? AND user_id = ?",
+            (until_ts, int(time.time()), group_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def bank_deposit(self, group_id: int, user_id: int, amount: int) -> Optional[EconomyProfile]:
+        profile = await self.get_economy(group_id, user_id)
+        if amount <= 0 or profile.balance < amount:
+            return None
+        await self._ensure_economy_row(group_id, user_id)
+        await self.conn.execute(
+            "UPDATE economy_profiles SET balance = balance - ?, bank = bank + ?, updated_at = ? "
+            "WHERE group_id = ? AND user_id = ?",
+            (amount, amount, int(time.time()), group_id, user_id),
+        )
+        await self.conn.commit()
+        return await self.get_economy(group_id, user_id)
+
+    async def bank_withdraw(self, group_id: int, user_id: int, amount: int) -> Optional[EconomyProfile]:
+        profile = await self.get_economy(group_id, user_id)
+        if amount <= 0 or profile.bank < amount:
+            return None
+        await self._ensure_economy_row(group_id, user_id)
+        await self.conn.execute(
+            "UPDATE economy_profiles SET bank = bank - ?, balance = balance + ?, updated_at = ? "
+            "WHERE group_id = ? AND user_id = ?",
+            (amount, amount, int(time.time()), group_id, user_id),
+        )
+        await self.conn.commit()
+        return await self.get_economy(group_id, user_id)
+
+    async def get_leaderboard(self, group_id: int, limit: int = 10) -> list[EconomyProfile]:
+        cursor = await self.conn.execute(
+            "SELECT * FROM economy_profiles WHERE group_id = ? "
+            "ORDER BY (balance + bank) DESC LIMIT ?",
+            (group_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [_row_to_economy_profile(row) for row in rows]
+
+    # ------------------------------------------------------------------ #
+    # Federaciones (handlers/federations.py)
+    # ------------------------------------------------------------------ #
+    async def create_fed(self, name: str, owner_id: int) -> str:
+        """Genera un IDFed único (FED-XXXXXX) y crea la federación.
+        El creador queda registrado como owner_id en la tabla feds (no
+        hace falta una fila aparte en fed_admins para él)."""
+        import random
+        import string
+
+        for _ in range(20):  # margen amplísimo; una colisión real es casi imposible
+            fed_id = "FED-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+            existing = await self.get_fed(fed_id)
+            if existing is None:
+                break
+        else:
+            raise RuntimeError("No se pudo generar un IDFed único, algo muy raro está pasando.")
+
+        await self.conn.execute(
+            "INSERT INTO feds (fed_id, name, owner_id, created_at) VALUES (?, ?, ?, ?)",
+            (fed_id, name, owner_id, int(time.time())),
+        )
+        await self.conn.commit()
+        return fed_id
+
+    async def get_fed(self, fed_id: str) -> Optional[aiosqlite.Row]:
+        cursor = await self.conn.execute("SELECT * FROM feds WHERE fed_id = ?", (fed_id,))
+        return await cursor.fetchone()
+
+    async def set_fed_chat(self, fed_id: str, chat_id: int) -> None:
+        await self.conn.execute("UPDATE feds SET fchat_id = ? WHERE fed_id = ?", (chat_id, fed_id))
+        await self.conn.commit()
+
+    async def is_fed_admin(self, fed_id: str, user_id: int) -> bool:
+        """True si es el creador O un administrador aceptado de la federación."""
+        fed = await self.get_fed(fed_id)
+        if fed is not None and fed["owner_id"] == user_id:
+            return True
+        cursor = await self.conn.execute(
+            "SELECT 1 FROM fed_admins WHERE fed_id = ? AND user_id = ?", (fed_id, user_id)
+        )
+        return await cursor.fetchone() is not None
+
+    async def add_fed_admin(self, fed_id: str, user_id: int) -> None:
+        await self.conn.execute(
+            "INSERT INTO fed_admins (fed_id, user_id, added_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(fed_id, user_id) DO NOTHING",
+            (fed_id, user_id, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def remove_fed_admin(self, fed_id: str, user_id: int) -> None:
+        await self.conn.execute(
+            "DELETE FROM fed_admins WHERE fed_id = ? AND user_id = ?", (fed_id, user_id)
+        )
+        await self.conn.commit()
+
+    async def join_group_to_fed(self, group_id: int, fed_id: str) -> None:
+        await self.conn.execute(
+            "INSERT INTO fed_groups (group_id, fed_id, joined_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(group_id) DO UPDATE SET fed_id = excluded.fed_id, joined_at = excluded.joined_at",
+            (group_id, fed_id, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def get_group_fed(self, group_id: int) -> Optional[str]:
+        cursor = await self.conn.execute("SELECT fed_id FROM fed_groups WHERE group_id = ?", (group_id,))
+        row = await cursor.fetchone()
+        return row["fed_id"] if row else None
+
+    async def get_fed_groups(self, fed_id: str) -> list[int]:
+        cursor = await self.conn.execute("SELECT group_id FROM fed_groups WHERE fed_id = ?", (fed_id,))
+        rows = await cursor.fetchall()
+        return [row["group_id"] for row in rows]
+
+    async def add_fed_ban(
+        self, fed_id: str, user_id: int, username: Optional[str], first_name: Optional[str],
+        reason: Optional[str], banned_by: int, imported: bool = False,
+    ) -> bool:
+        """Devuelve False si ese usuario ya estaba baneado en esta
+        federación (registro duplicado, no se pisa el existente)."""
+        try:
+            await self.conn.execute(
+                "INSERT INTO fed_bans (fed_id, user_id, username, first_name, reason, banned_by, "
+                "banned_at, imported) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (fed_id, user_id, username, first_name, reason, banned_by, int(time.time()), int(imported)),
+            )
+            await self.conn.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            return False
+
+    async def is_fed_banned(self, fed_id: str, user_id: int) -> bool:
+        cursor = await self.conn.execute(
+            "SELECT 1 FROM fed_bans WHERE fed_id = ? AND user_id = ?", (fed_id, user_id)
+        )
+        return await cursor.fetchone() is not None
+
+    async def get_fed_ban(self, fed_id: str, user_id: int) -> Optional[aiosqlite.Row]:
+        cursor = await self.conn.execute(
+            "SELECT fed_bans.*, feds.name AS fed_name FROM fed_bans "
+            "JOIN feds ON feds.fed_id = fed_bans.fed_id "
+            "WHERE fed_bans.fed_id = ? AND fed_bans.user_id = ?",
+            (fed_id, user_id),
+        )
+        return await cursor.fetchone()
+
+    async def get_fed_bans(self, fed_id: str) -> list[aiosqlite.Row]:
+        cursor = await self.conn.execute("SELECT * FROM fed_bans WHERE fed_id = ?", (fed_id,))
+        return await cursor.fetchall()
+
+    async def get_fed_bans_for_user(self, user_id: int) -> list[aiosqlite.Row]:
+        cursor = await self.conn.execute(
+            "SELECT fed_bans.*, feds.name AS fed_name FROM fed_bans "
+            "JOIN feds ON feds.fed_id = fed_bans.fed_id "
+            "WHERE fed_bans.user_id = ? ORDER BY fed_bans.banned_at DESC",
+            (user_id,),
+        )
+        return await cursor.fetchall()
+
+    async def create_promote_invite(self, fed_id: str, user_id: int, invited_by: int) -> int:
+        cursor = await self.conn.execute(
+            "INSERT INTO fed_promote_invites (fed_id, user_id, invited_by, status, created_at) "
+            "VALUES (?, ?, ?, 'pending', ?)",
+            (fed_id, user_id, invited_by, int(time.time())),
+        )
+        await self.conn.commit()
+        return cursor.lastrowid
+
+    async def get_pending_invite(self, fed_id: str, user_id: int) -> Optional[aiosqlite.Row]:
+        cursor = await self.conn.execute(
+            "SELECT * FROM fed_promote_invites WHERE fed_id = ? AND user_id = ? AND status = 'pending'",
+            (fed_id, user_id),
+        )
+        return await cursor.fetchone()
+
+    async def get_promote_invite(self, invite_id: int) -> Optional[aiosqlite.Row]:
+        cursor = await self.conn.execute(
+            "SELECT * FROM fed_promote_invites WHERE id = ?", (invite_id,)
+        )
+        return await cursor.fetchone()
+
+    async def resolve_invite(self, invite_id: int, status: str) -> None:
+        await self.conn.execute(
+            "UPDATE fed_promote_invites SET status = ?, resolved_at = ? WHERE id = ?",
+            (status, int(time.time()), invite_id),
+        )
+        await self.conn.commit()
+
+    async def record_fed_import(self, fed_id: str, imported_by: int, total: int) -> None:
+        await self.conn.execute(
+            "INSERT INTO fed_imports (fed_id, imported_by, total, imported_at) VALUES (?, ?, ?, ?)",
+            (fed_id, imported_by, total, int(time.time())),
         )
         await self.conn.commit()
 

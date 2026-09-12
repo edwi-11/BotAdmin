@@ -43,6 +43,7 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from database import DEFAULT_GOODBYE_TEXT, DEFAULT_RULES_TEXT, DEFAULT_WELCOME_TEXT, Database
+from handlers.federations import enforce_fed_ban_on_join
 from handlers.recurring import MEDIA_LABELS, _extract_content
 from utils.entities import build_inline_keyboard, buttons_to_json, describe_buttons, json_to_buttons, parse_buttons_text
 from utils.formatting import error, escape_md, render_template, success
@@ -425,6 +426,11 @@ async def on_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     for new_user in message.new_chat_members:
         if new_user.is_bot and new_user.id == context.bot.id:
             continue  # El propio bot fue añadido al grupo; no es un "nuevo miembro" a saludar.
+
+        if await enforce_fed_ban_on_join(context, chat.id, new_user.id):
+            # Está fbaneado en la federación de este grupo: ya se lo baneó
+            # ahí mismo, así que no corresponde darle la bienvenida.
+            continue
 
         await db.upsert_user(new_user.id, new_user.username, new_user.first_name)
         text = render_template(
