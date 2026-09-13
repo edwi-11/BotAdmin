@@ -32,14 +32,17 @@ Aplicación del baneo en los grupos:
       (on_chat_join_request): antes de dar la bienvenida a alguien, se
       revisa si está fbaneado en la federación de ESE grupo, y si es así
       se lo banea/rechaza en el momento en vez de saludarlo.
-    - Las importaciones masivas (/import) NO aplican el baneo a todos los
-      grupos en el momento (podría ser miles de llamadas a la API de
-      Telegram de una sola vez); quedan guardadas y se aplican solas la
-      próxima vez que esa persona intente entrar a un grupo de la fed,
-      igual que cualquier otro fban.
+    - /import SÍ aplica los baneos importados en todos los grupos que ya
+      pertenezcan a la federación (por si alguno de los importados ya
+      estaba adentro de esos grupos desde antes) — pero lo hace en
+      SEGUNDO PLANO, con pausa entre cada llamada y un mensaje de
+      progreso que se va editando, para no trabarse ni pegarle de golpe
+      a la API de Telegram con listas grandes (ver
+      _apply_import_bans_background).
 """
 from __future__ import annotations
 
+import asyncio
 import csv
 import html
 import io
@@ -279,12 +282,14 @@ async def fban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     group_ids = await db.get_fed_groups(fed_id)
     banned_in = 0
+    failed_groups: list[tuple[int, str]] = []
     for gid in group_ids:
         try:
             await context.bot.ban_chat_member(gid, resolved.user_id)
             banned_in += 1
         except TelegramError as exc:
             logger.info("No pude aplicar el FBAN en el grupo %s: %s", gid, exc)
+            failed_groups.append((gid, str(exc)))
 
     text = (
         "🚫 <b>Usuario baneado de la federación</b>\n\n"
@@ -294,8 +299,27 @@ async def fban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         f"👮 Administrador de la federación: {_mention(user.id, user.first_name)}"
     )
 
+    # Siempre mostramos cuántos grupos recibieron el baneo de verdad —
+    # antes esto solo se mostraba si /fban se ejecutaba desde el privado,
+    # así que desde un grupo el mensaje decía "baneado" aunque el baneo
+    # real en Telegram hubiera fallado (típicamente porque el bot no es
+    # admin ahí, o le falta el permiso de restringir miembros).
+    status_lines = [f"\n\n📊 Aplicado en {banned_in}/{len(group_ids)} grupos de la federación."]
+    if failed_groups:
+        status_lines.append(
+            "⚠️ No se pudo banear en:\n" + "\n".join(
+                f"• <code>{gid}</code>: {html.escape(reason)}" for gid, reason in failed_groups[:5]
+            )
+        )
+        if len(failed_groups) > 5:
+            status_lines.append(f"…y {len(failed_groups) - 5} más.")
+        status_lines.append(
+            "Lo más común es que el bot no sea administrador ahí, o le falte el permiso "
+            "\"Restringir miembros\" — revisalo con /grupos."
+        )
+    extra = "\n".join(status_lines)
+
     # Lugar 1: donde se ejecutó el comando.
-    extra = f"\n\n(Aplicado en {banned_in}/{len(group_ids)} grupos de la federación.)" if is_private else ""
     await message.reply_text(text + extra, parse_mode="HTML")
 
     # Lugar 2: el FChat, si está configurado y no es el mismo chat de arriba.
@@ -471,6 +495,66 @@ def _csv_get(row: dict, field_map: dict, *names: str) -> Optional[str]:
     return None
 
 
+async def _apply_import_bans_background(
+    context: ContextTypes.DEFAULT_TYPE, *, fed_name: str, group_ids: list[int],
+    user_ids: list[int], progress_chat_id: int,
+) -> None:
+    """Aplica en Telegram (ban_chat_member) cada usuario recién importado
+    en cada grupo que ya pertenece a la federación — así, si alguno de
+    los importados ya estaba adentro de alguno de esos grupos, queda
+    expulsado de verdad y no solo "registrado" en la base. Corre en
+    segundo plano (no bloquea la respuesta de /import) con una pausa
+    entre cada llamada para no pegarle de golpe a los límites de la API
+    de Telegram, y va editando un mensaje de progreso."""
+    total = len(user_ids) * len(group_ids)
+    if total == 0:
+        return
+
+    progress_message = None
+    try:
+        progress_message = await context.bot.send_message(
+            progress_chat_id,
+            f"📤 Aplicando {len(user_ids)} baneos importados en {len(group_ids)} grupo(s) "
+            f"de <b>{html.escape(fed_name)}</b>...\n0/{total}",
+            parse_mode="HTML",
+        )
+    except TelegramError as exc:
+        logger.info("No pude mandar el progreso de la importación: %s", exc)
+
+    applied = 0
+    done = 0
+    for target_id in user_ids:
+        for gid in group_ids:
+            done += 1
+            try:
+                await context.bot.ban_chat_member(gid, target_id)
+                applied += 1
+            except TelegramError as exc:
+                logger.info("No pude aplicar el baneo importado de %s en %s: %s", target_id, gid, exc)
+
+            if progress_message and (done % 25 == 0 or done == total):
+                try:
+                    await progress_message.edit_text(
+                        f"📤 Aplicando baneos importados en los grupos de <b>{html.escape(fed_name)}</b>...\n"
+                        f"{done}/{total} — ✅ {applied} aplicados",
+                        parse_mode="HTML",
+                    )
+                except TelegramError:
+                    pass
+            await asyncio.sleep(0.05)
+
+    if progress_message:
+        try:
+            await progress_message.edit_text(
+                f"✅ Listo — se aplicaron {applied}/{total} baneos importados en los grupos de "
+                f"<b>{html.escape(fed_name)}</b>. (Los que no se aplicaron probablemente ya se habían "
+                "ido del grupo, o el bot no tiene permiso de restringir miembros ahí.)",
+                parse_mode="HTML",
+            )
+        except TelegramError:
+            pass
+
+
 async def import_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.effective_message
     user = update.effective_user
@@ -516,6 +600,7 @@ async def import_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     total_ok = 0
     total_dup = 0
     total_invalid = 0
+    newly_banned_ids: list[int] = []
 
     for row in reader:
         raw_id = _csv_get(row, field_map, "user_id", "userid", "id")
@@ -530,6 +615,7 @@ async def import_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         ok = await db.add_fed_ban(fed_id, target_id, username, first_name, reason, user.id, imported=True)
         if ok:
             total_ok += 1
+            newly_banned_ids.append(target_id)
         else:
             total_dup += 1
 
@@ -540,7 +626,22 @@ async def import_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         lines.append(f"⚠️ {total_dup} ya estaban baneados en esta federación (omitidos).")
     if total_invalid:
         lines.append(f"⚠️ {total_invalid} filas inválidas (sin ID de usuario reconocible, omitidas).")
+
+    group_ids = await db.get_fed_groups(fed_id)
+    if newly_banned_ids and group_ids:
+        lines.append(
+            f"\n⏳ Aplicando estos baneos en los {len(group_ids)} grupo(s) que ya tiene la federación, "
+            "en segundo plano (te aviso acá mismo cuando termine)."
+        )
     await message.reply_text("\n".join(lines), parse_mode="HTML")
+
+    if newly_banned_ids and group_ids:
+        context.application.create_task(
+            _apply_import_bans_background(
+                context, fed_name=fed["name"], group_ids=group_ids,
+                user_ids=newly_banned_ids, progress_chat_id=message.chat_id,
+            )
+        )
 
     if fed["fchat_id"]:
         try:
@@ -571,6 +672,56 @@ def _format_fban_detail(row: dict, admin_name: str) -> str:
         f"👮 Administrador: {html.escape(admin_name)}\n"
         f"📅 Fecha: {date_str}\n\n"
         f"{origin}"
+    )
+
+
+async def fedsync_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/fedsync IDFed — re-aplica TODOS los baneos que ya tiene registrados
+    la federación (vengan de /fban o de una importación vieja) en los
+    grupos que ya pertenecen a ella. Sirve para el caso de "importé una
+    lista antes de que esto se aplicara solo" o "agregué un montón de
+    baneos y quiero forzar que se revisen todos los grupos de nuevo".
+    No hace falta chequear membresía antes: banear a alguien que no está
+    en el grupo no falla ni cuesta más, Telegram simplemente lo deja
+    preventivamente bloqueado."""
+    message = update.effective_message
+    user = update.effective_user
+    db = _get_db(context)
+
+    fed_id, _rest = await _resolve_fed_context(update, db, list(context.args or []))
+    if fed_id is None:
+        await message.reply_text(error("Especificá el IDFed o usá este comando dentro de un grupo de la federación."))
+        return
+    fed = await db.get_fed(fed_id)
+    if fed is None:
+        await message.reply_text(error(f"No existe ninguna federación con el ID {fed_id}."))
+        return
+    if not (await db.is_fed_admin(fed_id, user.id) or is_owner(user.id)):
+        await message.reply_text(error("No sos administrador de esta federación."))
+        return
+
+    group_ids = await db.get_fed_groups(fed_id)
+    if not group_ids:
+        await message.reply_text(error("Esta federación todavía no tiene ningún grupo vinculado. Usá /joinfed primero."))
+        return
+
+    bans = await db.get_fed_bans(fed_id)
+    if not bans:
+        await message.reply_text(error("Esta federación no tiene ningún baneo registrado todavía."))
+        return
+
+    user_ids = [row["user_id"] for row in bans]
+    total = len(user_ids) * len(group_ids)
+    await message.reply_text(
+        f"⏳ Re-aplicando {len(user_ids)} baneos de la federación en {len(group_ids)} grupo(s) "
+        f"({total} llamadas a Telegram en total, con pausa entre cada una). Puede tardar un buen "
+        "rato con listas grandes — te aviso el progreso acá mismo."
+    )
+    context.application.create_task(
+        _apply_import_bans_background(
+            context, fed_name=fed["name"], group_ids=group_ids,
+            user_ids=user_ids, progress_chat_id=message.chat_id,
+        )
     )
 
 

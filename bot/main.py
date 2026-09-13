@@ -136,7 +136,8 @@ from handlers.economy import (
 from handlers.federations import (
     cancelarfed_command, fban_command, fbanstat_command, fchat_command,
     feddemote_command, fedpromote_callback, fedpromote_command,
-    import_command, joinfed_command, newfed_command, try_consume_fed_input,
+    fedsync_command, import_command, joinfed_command, newfed_command,
+    try_consume_fed_input,
 )
 from utils.logger import setup_logging
 
@@ -204,6 +205,7 @@ BOT_COMMANDS = [
     BotCommand("feddemote", "Quitar a alguien de administrador de la federación"),
     BotCommand("import", "Importar una lista de baneados (.csv)"),
     BotCommand("fbanstat", "Consultar los baneos de federación de alguien"),
+    BotCommand("fedsync", "Re-aplicar todos los baneos de la federación en sus grupos"),
     BotCommand("top", "Ver el top 10 de más mensajes del grupo"),
 ]
 
@@ -649,6 +651,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("feddemote", feddemote_command))
     application.add_handler(CommandHandler("import", import_command))
     application.add_handler(CommandHandler("fbanstat", fbanstat_command))
+    application.add_handler(CommandHandler("fedsync", fedsync_command))
     application.add_handler(CallbackQueryHandler(fedpromote_callback, pattern=r"^fedp:"))
     application.add_handler(CallbackQueryHandler(ranking_callback, pattern=r"^ranking_(today|week|all)$"))
 

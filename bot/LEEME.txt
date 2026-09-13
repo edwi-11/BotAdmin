@@ -1,38 +1,31 @@
-Comando /salirgrupo — 4 archivos
-==================================
+Nuevo comando /fedsync — 2 archivos
+=====================================
 
-1. handlers/owner_groups.py (MODIFICADO)
-   Nuevo comando /salirgrupo (solo el propietario):
-   - Adentro del grupo: /salirgrupo → el bot manda un aviso y se va de
-     ESE grupo.
-   - Desde cualquier lado (incluido el privado): /salirgrupo <id> → se
-     va de ese grupo puntual (el ID lo sacás de /grupos).
+1. handlers/federations.py (MODIFICADO — se agregó fedsync_command,
+   además de los 2 arreglos de la tanda anterior en /fban y /import)
+2. main.py (MODIFICADO — solo registra el comando nuevo)
 
-2. utils/groups.py (MODIFICADO)
-3. handlers/activation.py (MODIFICADO)
-4. main.py (MODIFICADO — solo registra el comando nuevo)
+/fedsync IDFed — re-aplica TODOS los baneos que ya tiene registrados la
+federación (los de /fban de siempre, Y los de importaciones viejas, como
+tus 40 mil) en los grupos que ya están conectados a esa federación.
 
-   ESTOS 3 son el cambio importante para que se cumpla lo que pediste:
-   "no quiero que borre la configuración... todo se mantendrá igual
-   cuando ceo vuelva a ingresar".
+Uso:
+    Dentro de un grupo ya conectado a la fed: /fedsync
+    Desde cualquier otro lado: /fedsync FED-XXXXXX
 
-   Encontré que el código YA BORRABA la fila de known_groups apenas el
-   bot dejaba de estar en un grupo (fuera por /salirgrupo, por una
-   expulsión, o por cualquier otro motivo) — y ahí es justo donde vive
-   el estado de /activar y el bloqueo por canal. O sea que si no
-   corregía esto, aunque /salirgrupo en sí no tocara nada más, la
-   activación del grupo se hubiera perdido igual (y con eso, /menu y
-   /start hubieran dejado de funcionar hasta volver a correr /activar).
+No hace falta filtrar de antemano quién está realmente en el grupo:
+banear a alguien que no es miembro no falla ni cuesta más — Telegram
+simplemente lo deja bloqueado preventivamente. Así que de tus 40 mil,
+los que efectivamente estén en ese grupo se van a ir echando de a poco,
+y el resto queda preventivamente bloqueado por si algún día intentan
+entrar — todo con el mismo comando, sin que vos tengas que averiguar
+antes quién está y quién no.
 
-   Ahora, en ningún lado del código se borra más esa fila cuando el bot
-   deja de estar en un grupo — ni al salir con /salirgrupo, ni si lo
-   expulsan, ni si falla un envío de anuncio a ese grupo. Simplemente se
-   marca como "🚫 Bot expulsado" en /grupos mientras el bot no esté ahí,
-   y si vuelve a entrar en cualquier momento (lo re-agregan a mano, o le
-   volvés a mandar la invitación), todo sigue exactamente como estaba:
-   activación, mensajes recurrentes, baneos, palabras prohibidas,
-   federación — ninguna de esas tablas se tocó nunca en todo este
-   cambio, viven aparte y ya estaban a salvo.
+Corre en segundo plano igual que la importación (pausa entre cada
+baneo + mensaje de progreso editándose), así que con 40.000 usuarios y
+1 grupo conectado, calculá que puede tardar bastante (a este ritmo,
+40.000 llamadas rondan la media hora) — pero no traba nada más del bot
+mientras tanto, podés seguir usándolo con normalidad.
 
 IMPORTANTE: este zip NO incluye ningún archivo de base de datos
 (bot.db). Nunca reemplaces database/bot.db con nada de un zip mío —
