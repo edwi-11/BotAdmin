@@ -107,11 +107,15 @@ async def on_bot_membership_change(update: Update, context: ContextTypes.DEFAULT
     db: Database = context.application.bot_data["db"]
 
     if just_left:
-        # Lo sacaron del grupo (o lo banearon): lo borramos de known_groups
-        # de inmediato para que no quede como fantasma en /menu, /owner y
-        # /grupos hasta la próxima limpieza automática.
-        await db.remove_group(chat.id)
-        logger.info("Bot removido de %s (%s), grupo eliminado de known_groups", chat.id, chat.title)
+        # Lo sacaron del grupo (o se fue solo con /salirgrupo): a
+        # propósito NO borramos la fila de known_groups. Ahí vive el
+        # estado de /activar y el bloqueo por canal; si el bot vuelve a
+        # entrar a este mismo grupo más adelante, todo tiene que seguir
+        # exactamente igual sin que haya que reconfigurar nada. El resto
+        # de la configuración del grupo (mensajes recurrentes, baneos,
+        # palabras prohibidas, federación) vive en otras tablas propias
+        # y nunca se tocó por estar el bot afuera.
+        logger.info("Bot removido de %s (%s); se conserva su configuración por si vuelve a entrar", chat.id, chat.title)
         return
 
     if not just_joined:

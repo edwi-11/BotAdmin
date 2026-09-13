@@ -15,15 +15,19 @@ Por qué hace falta:
 
 `get_groups_report()` es la función central: pide cada chat a la API de
 Telegram y clasifica cada grupo en un estado (activo / expulsado /
-sin_acceso), de paso refresca el título guardado si cambió y limpia
-known_groups SOLO cuando Telegram confirma que el grupo ya no es
-accesible (expulsado o borrado). Un error transitorio (rate limit,
-timeout, etc.) NO borra el grupo ni lo hace desaparecer del listado: se
-muestra igual, con el título/ID que ya teníamos guardado y el estado
-"sin acceso", en vez de desaparecer en silencio como pasaba antes (ese
-era el motivo de que a veces algunos grupos donde el bot seguía adentro
-"no aparecieran" en /grupos, /owner o /menu — bastaba un error puntual de
-red durante la verificación de ESE grupo para que se descartara del todo).
+sin_acceso), de paso refresca el título guardado si cambió. A propósito
+NUNCA borra un grupo de known_groups solo porque el bot ya no tiene
+acceso (expulsado, o /salirgrupo): ahí vive el estado de /activar y el
+bloqueo por canal, y si el bot vuelve a entrar más adelante (lo re-agregan,
+o usó /salirgrupo y se lo vuelve a invitar) todo tiene que seguir
+exactamente igual, sin que haya que reconfigurar nada. Un error
+transitorio (rate limit, timeout, etc.) tampoco borra el grupo ni lo hace
+desaparecer del listado: se muestra igual, con el título/ID que ya
+teníamos guardado y el estado "sin acceso", en vez de desaparecer en
+silencio como pasaba antes (ese era el motivo de que a veces algunos
+grupos donde el bot seguía adentro "no aparecieran" en /grupos, /owner o
+/menu — bastaba un error puntual de red durante la verificación de ESE
+grupo para que se descartara del todo).
 
 `get_verified_groups()` se mantiene por compatibilidad con /owner y
 /menu (que solo necesitan la lista de grupos realmente activos, no el
@@ -71,15 +75,16 @@ async def _resolve_group(bot: Bot, db: Database, group_id: int, stored_title: Op
     try:
         chat = await bot.get_chat(group_id)
     except Forbidden:
-        # Nos expulsaron del grupo (o el usuario baneó al bot). Confirmado
-        # por Telegram: ya no hace falta seguir guardándolo.
-        await db.remove_group(group_id)
-        logger.info("Grupo %s: expulsado, eliminado de known_groups", group_id)
+        # Nos expulsaron del grupo (o se fue solo con /salirgrupo). NO lo
+        # borramos de known_groups: ahí vive el estado de /activar (y el
+        # bloqueo por canal), y si el bot vuelve a entrar más adelante
+        # queremos que todo siga exactamente igual sin tener que
+        # reconfigurar nada. Solo se refleja como "expulsado" en el
+        # listado hasta que vuelva a entrar.
         return GroupStatus(group_id, fallback_title, "expulsado")
     except BadRequest as exc:
         if any(hint in str(exc).lower() for hint in _PERMANENTLY_GONE_HINTS):
-            await db.remove_group(group_id)
-            logger.info("Grupo %s ya no existe (%s), eliminado de known_groups", group_id, exc)
+            logger.info("Grupo %s ya no existe (%s); se muestra como expulsado, sin borrar su configuración", group_id, exc)
             return GroupStatus(group_id, fallback_title, "expulsado")
         # Otro BadRequest (rate limit, chat temporalmente inaccesible,
         # etc.): no lo borramos, se muestra como "sin acceso" con los

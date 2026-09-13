@@ -18,10 +18,21 @@ quedó guardado en la base:
   cantidad de miembros, y se intenta generar un link de invitación
   (necesita el permiso de admin "Invitar usuarios vía enlace").
 - 🚫 Bot expulsado: Telegram confirmó que ya no somos miembros (nos
-  sacaron, nos banearon, o el grupo se borró). Ya se limpió de la base.
+  sacaron, nos banearon, el grupo se borró, o el propietario usó
+  /salirgrupo). A propósito NO se borra de la base: si el bot vuelve a
+  entrar a ese grupo más adelante, toda su configuración (activación,
+  mensajes recurrentes, baneos, palabras prohibidas, federación) sigue
+  exactamente igual, sin que haya que reconfigurar nada.
 - ⚠️ Sin acceso: no se pudo verificar en este momento (rate limit, error
   de red puntual). El grupo NO se borra de la base por esto: se vuelve a
   intentar la próxima vez que se use /grupos, /owner o /menu.
+
+/salirgrupo — hace que el bot se retire de un grupo por su propia
+cuenta (context.bot.leave_chat), sin perder nada de su configuración
+guardada. Se puede usar de dos formas:
+- Adentro del grupo del que se quiere ir: /salirgrupo (sin argumentos).
+- Desde cualquier lado (incluido el privado): /salirgrupo <id_del_grupo>.
+Solo el propietario puede usarlo.
 
 El reporte (que implica una consulta a Telegram por cada grupo) se pide
 una sola vez al abrir /grupos y se guarda en memoria (user_data) para que
@@ -178,3 +189,59 @@ async def grupos_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     await query.answer()
+
+
+# --------------------------------------------------------------------- #
+# /salirgrupo — el bot se va de un grupo por su cuenta, sin perder nada
+# --------------------------------------------------------------------- #
+async def salirgrupo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    chat = update.effective_chat
+    message = update.effective_message
+
+    if not is_owner(user.id):
+        await message.reply_text("🔒 Este comando es solo para el propietario del bot.")
+        return
+
+    if context.args:
+        raw = context.args[0].strip()
+        try:
+            group_id = int(raw)
+        except ValueError:
+            await message.reply_text(f"❌ «{raw}» no es un ID de grupo válido. Sacalo de /grupos.")
+            return
+    elif chat.type in ("group", "supergroup"):
+        group_id = chat.id
+    else:
+        await message.reply_text(
+            "Usá /salirgrupo adentro del grupo del que querés que me vaya, "
+            "o /salirgrupo <id_del_grupo> desde cualquier lado (el ID lo sacás de /grupos)."
+        )
+        return
+
+    db: Database = context.application.bot_data["db"]
+    title = await db.get_group_title(group_id) or str(group_id)
+    leaving_current_chat = group_id == chat.id
+
+    try:
+        if leaving_current_chat:
+            # Avisamos ANTES de irnos: una vez afuera ya no voy a poder
+            # mandar nada más en este chat.
+            await context.bot.send_message(
+                group_id,
+                "👋 Me voy de este grupo por indicación del propietario.\n"
+                "Toda la configuración (mensajes recurrentes, baneos, palabras "
+                "prohibidas, federación, activación) queda guardada tal cual "
+                "para cuando vuelva a entrar.",
+            )
+        await context.bot.leave_chat(group_id)
+    except TelegramError as exc:
+        await message.reply_text(f"❌ No pude salir del grupo {title} (<code>{group_id}</code>): {exc}", parse_mode="HTML")
+        return
+
+    if not leaving_current_chat:
+        await message.reply_text(
+            f"✅ Salí del grupo <b>{title}</b> (<code>{group_id}</code>). "
+            "La configuración queda guardada para cuando vuelva a entrar.",
+            parse_mode="HTML",
+        )

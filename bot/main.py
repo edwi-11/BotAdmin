@@ -95,7 +95,7 @@ from handlers.recurring import LOCAL_FILE_PREFIX
 from handlers.recurring import _send_content as _send_broadcast_content
 from handlers.recurring import load_all_recurring_jobs, recurring_callback, try_consume_draft_input
 from handlers.quote_sticker import q_command
-from handlers.owner_groups import grupos_callback, grupos_command
+from handlers.owner_groups import grupos_callback, grupos_command, salirgrupo_command
 from handlers.remote_control import (
     owner_command,
     owner_select_callback,
@@ -320,10 +320,14 @@ async def _broadcast_dispatch_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                     await db.set_dm_ok(recipient_id, False)
                 else:
                     # Grupo confirmado inaccesible (nos expulsaron, el
-                    # grupo se borró, etc.): lo sacamos de known_groups ya
-                    # mismo, en vez de esperar a que alguien use /grupos,
-                    # /owner o /menu para que se note y se limpie solo.
-                    await db.remove_group(recipient_id)
+                    # grupo se borró, etc.): a propósito NO lo borramos de
+                    # known_groups (ahí vive el estado de /activar y demás
+                    # configuración; si el bot vuelve a entrar más
+                    # adelante todo tiene que seguir igual). Solo lo
+                    # sacamos de la lista de destinatarios de ESTE envío
+                    # para no seguir intentándole mandar broadcasts futuros
+                    # sin sentido hasta que /grupos, /owner o /menu lo
+                    # vuelvan a verificar y confirmen si ya volvió.
                     known_group_ids.discard(recipient_id)
                 logger.warning(
                     "El usuario/grupo %s bloqueó al bot o no es accesible (anuncio #%s).",
@@ -564,6 +568,7 @@ def build_application() -> Application:
 
     # --- Lista de grupos + links de invitación (solo el propietario) ---
     application.add_handler(CommandHandler("grupos", grupos_command))
+    application.add_handler(CommandHandler("salirgrupo", salirgrupo_command))
     application.add_handler(CommandHandler(["kang", "steal"], kang_command))
     application.add_handler(CommandHandler("owner", owner_command))
     application.add_handler(CommandHandler("ready", ready_command))

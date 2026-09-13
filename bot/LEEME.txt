@@ -1,80 +1,39 @@
-Sistema completo de Federaciones (Feds) — 5 archivos
-======================================================
+Comando /salirgrupo — 4 archivos
+==================================
 
-1. handlers/federations.py  (NUEVO)
-   Todo el sistema: /newfed, /fban, /joinfed, /fchat, /fedpromote,
-   /feddemote, /import, /fbanstat, más el callback de aceptar/rechazar
-   invitaciones a administrar una federación. Documentación detallada
-   de cada comando en los docstrings del archivo.
+1. handlers/owner_groups.py (MODIFICADO)
+   Nuevo comando /salirgrupo (solo el propietario):
+   - Adentro del grupo: /salirgrupo → el bot manda un aviso y se va de
+     ESE grupo.
+   - Desde cualquier lado (incluido el privado): /salirgrupo <id> → se
+     va de ese grupo puntual (el ID lo sacás de /grupos).
 
-2. database.py (MODIFICADO)
-   6 tablas nuevas: feds, fed_admins, fed_groups, fed_bans,
-   fed_promote_invites, fed_imports. Y todos los métodos que
-   federations.py necesita (create_fed, get_fed, is_fed_admin,
-   add_fed_ban, get_fed_bans_for_user, etc.) Probé el ciclo completo a
-   mano (crear fed, admins, unir grupos, fban, duplicados rechazados,
-   invitaciones, fchat, importación masiva) — todo funcionando.
+2. utils/groups.py (MODIFICADO)
+3. handlers/activation.py (MODIFICADO)
+4. main.py (MODIFICADO — solo registra el comando nuevo)
 
-3. handlers/greetings.py (MODIFICADO — 3 líneas)
-   Antes de dar la bienvenida a alguien que entra a un grupo, se chequea
-   si está fbaneado en la federación de ESE grupo — si es así, se lo
-   banea ahí mismo al toque y no se le da la bienvenida.
+   ESTOS 3 son el cambio importante para que se cumpla lo que pediste:
+   "no quiero que borre la configuración... todo se mantendrá igual
+   cuando ceo vuelva a ingresar".
 
-4. handlers/join_requests.py (MODIFICADO — mismo chequeo)
-   Mismo chequeo pero para solicitudes de ingreso (grupos con "aprobar
-   nuevos miembros" activado): si está fbaneado, se rechaza la
-   solicitud directo, sin guardarla como pendiente.
+   Encontré que el código YA BORRABA la fila de known_groups apenas el
+   bot dejaba de estar en un grupo (fuera por /salirgrupo, por una
+   expulsión, o por cualquier otro motivo) — y ahí es justo donde vive
+   el estado de /activar y el bloqueo por canal. O sea que si no
+   corregía esto, aunque /salirgrupo en sí no tocara nada más, la
+   activación del grupo se hubiera perdido igual (y con eso, /menu y
+   /start hubieran dejado de funcionar hasta volver a correr /activar).
 
-5. main.py (MODIFICADO)
-   Se registran los 8 comandos + el callback de invitaciones + las
-   entradas en el menú de comandos del bot (BotCommand) + el wizard de
-   /newfed (pide el nombre por texto) enganchado al router de mensajes
-   ya existente.
-
-CÓMO FUNCIONA CADA COSA (resumen rápido; el detalle completo está en
-los docstrings de federations.py):
-
-- /newfed: te pregunta el nombre, genera un ID único (FED-XXXXXX) y
-  sos el creador automáticamente.
-- /fban usuario motivo (o respondiendo a un mensaje: /fban motivo):
-  banea YA MISMO en todos los grupos que ya pertenezcan a la
-  federación. Manda el aviso al grupo donde se ejecutó, al FChat (si
-  hay uno configurado), y una copia extra al privado del creador SOLO
-  si fue el creador quien lo ejecutó desde un grupo (para que se entere
-  aunque no esté mirando ese grupo en particular).
-- /joinfed IDFed (dentro del grupo a vincular, solo el creador): además
-  de vincular el grupo, sincroniza al revés — aplica ahí mismo todos
-  los baneos que ya tenía la federación.
-- /fchat IDFed (dentro del chat que querés usar como FChat, solo el
-  creador).
-- /fedpromote usuario: le manda un mensaje privado con botones
-  Aceptar/Rechazar — no se agrega como admin de fed hasta que acepte.
-- /feddemote usuario: le saca la administración (el creador nunca se
-  puede remover así).
-- /import (respondiendo a un .csv): acepta encabezados de columna en
-  cualquier mayúscula/minúscula y varios nombres posibles (user_id,
-  userid, id / username, user / reason, motivo), para poder importar
-  CSVs exportados de otros bots sin tener que acomodarlos a mano
-  primero. Los inválidos/duplicados se cuentan y se muestran, pero no
-  frenan el resto de la importación.
-- /fbanstat: en grupos, solo administradores; en privado, cualquiera.
-  Sin especificar federación, muestra TODAS donde está baneado; con
-  usuario + IDFed, muestra el detalle completo con el origen (manual vs
-  importado).
-
-DECISIÓN DE DISEÑO importante para que lo sepas: una importación masiva
-por CSV (que puede traer miles de registros) NO intenta banear a todos
-esos usuarios en todos los grupos de la federación en el momento de
-importar — sería una cantidad enorme de llamadas a la API de Telegram
-de una sola vez y probablemente terminaría en rate-limit. En cambio,
-quedan guardados como fbaneados, y el chequeo automático al entrar a
-cualquier grupo de la federación (greetings.py / join_requests.py) los
-agarra apenas alguno de ellos intente volver a entrar. Los fban
-individuales con /fban SÍ se aplican de inmediato a todos los grupos,
-porque ahí se trata de una sola persona, no miles.
+   Ahora, en ningún lado del código se borra más esa fila cuando el bot
+   deja de estar en un grupo — ni al salir con /salirgrupo, ni si lo
+   expulsan, ni si falla un envío de anuncio a ese grupo. Simplemente se
+   marca como "🚫 Bot expulsado" en /grupos mientras el bot no esté ahí,
+   y si vuelve a entrar en cualquier momento (lo re-agregan a mano, o le
+   volvés a mandar la invitación), todo sigue exactamente como estaba:
+   activación, mensajes recurrentes, baneos, palabras prohibidas,
+   federación — ninguna de esas tablas se tocó nunca en todo este
+   cambio, viven aparte y ya estaban a salvo.
 
 IMPORTANTE: este zip NO incluye ningún archivo de base de datos
 (bot.db). Nunca reemplaces database/bot.db con nada de un zip mío —
-esa carpeta es solo tuya, en el VPS. Las 6 tablas nuevas se crean solas
-al arrancar el bot (CREATE TABLE IF NOT EXISTS), no hace falta que
-hagas nada a mano.
+esa carpeta es solo tuya, en el VPS.
