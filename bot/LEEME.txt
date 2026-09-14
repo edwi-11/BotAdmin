@@ -1,31 +1,44 @@
-Nuevo comando /fedsync — 2 archivos
-=====================================
+2 arreglos — 4 archivos
+========================
 
-1. handlers/federations.py (MODIFICADO — se agregó fedsync_command,
-   además de los 2 arreglos de la tanda anterior en /fban y /import)
-2. main.py (MODIFICADO — solo registra el comando nuevo)
+1) /admin no te daba admin a vos mismo (el owner del bot)
+--------------------------------------------------------
+utils/permissions.py (MODIFICADO)
+   can_grant_admin() bloqueaba SIEMPRE otorgarle admin a cualquiera que
+   fuera "owner" del bot — pensado para evitar acciones raras, pero eso
+   te bloqueaba a vos mismo justo en el caso normal: pedirte a vos mismo
+   /admin en un grupo donde todavía no sos admin de Telegram, aunque el
+   bot sí tenga todos los permisos ahí. Separé la regla: otorgar admin
+   al propietario ahora SÍ está permitido; revocárselo (con /unadmin)
+   sigue bloqueado, para no dejarte sin admin en un grupo por accidente.
 
-/fedsync IDFed — re-aplica TODOS los baneos que ya tiene registrados la
-federación (los de /fban de siempre, Y los de importaciones viejas, como
-tus 40 mil) en los grupos que ya están conectados a esa federación.
+handlers/admin.py (MODIFICADO — 2 líneas)
+   Actualicé las dos llamadas a can_grant_admin() para indicar si la
+   acción es "grant" (otorgar, en /admin) o "revoke" (revocar, en
+   /unadmin), que es lo que ahora distingue la regla de arriba.
 
-Uso:
-    Dentro de un grupo ya conectado a la fed: /fedsync
-    Desde cualquier otro lado: /fedsync FED-XXXXXX
+Con esto, /admin (sin argumentos, o respondiendo/nombrándote a vos
+mismo) ya te da admin de verdad en el grupo, con los permisos que el
+bot ya tiene definidos (ADMIN_PERMISSIONS en admin.py).
 
-No hace falta filtrar de antemano quién está realmente en el grupo:
-banear a alguien que no es miembro no falla ni cuesta más — Telegram
-simplemente lo deja bloqueado preventivamente. Así que de tus 40 mil,
-los que efectivamente estén en ese grupo se van a ir echando de a poco,
-y el resto queda preventivamente bloqueado por si algún día intentan
-entrar — todo con el mismo comando, sin que vos tengas que averiguar
-antes quién está y quién no.
+2) Comando "unbrb" para sacarle el BRB a alguien a la fuerza
+---------------------------------------------------------------
+handlers/afk.py (MODIFICADO)
+   Nueva función unbrb_text_trigger(): respondiendo al mensaje de
+   alguien que está en BRB/AFK, escribís "unbrb" (sin "/", igual que
+   "brb" ya funciona sin barra) y se le saca el estado ahí mismo, con el
+   mensaje "✅ El owner te ha removido el brb, [nombre]." — SOLO
+   funciona si quien lo escribe sos vos, el propietario del bot; si lo
+   escribe cualquier otra persona, no hace nada (el mensaje sigue su
+   curso normal, no delata que existe este comando).
 
-Corre en segundo plano igual que la importación (pausa entre cada
-baneo + mensaje de progreso editándose), así que con 40.000 usuarios y
-1 grupo conectado, calculá que puede tardar bastante (a este ritmo,
-40.000 llamadas rondan la media hora) — pero no traba nada más del bot
-mientras tanto, podés seguir usándolo con normalidad.
+main.py (MODIFICADO — 2 líneas)
+   Se engancha unbrb_text_trigger al router de mensajes de texto plano,
+   antes del "brb" normal (ya que "unbrb" no coincide con el patrón de
+   "brb" de todas formas, pero por prolijidad se revisa primero).
+
+Uso: respondé al mensaje de la persona que puso brb, escribí "unbrb", y
+listo.
 
 IMPORTANTE: este zip NO incluye ningún archivo de base de datos
 (bot.db). Nunca reemplaces database/bot.db con nada de un zip mío —

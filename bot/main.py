@@ -46,7 +46,7 @@ from handlers.admin import admin_command, unadmin_command
 from handlers.activity_ranking import ranking_callback, top_command
 from utils.activity_stats import schedule_activity_resets, track_activity
 from utils.weekly_summary import count_new_members, schedule_weekly_summary
-from handlers.afk import brb_text_trigger, load_afk_cache, track_and_check_afk
+from handlers.afk import brb_text_trigger, load_afk_cache, track_and_check_afk, unbrb_text_trigger
 from handlers.channel_lock import canal_command, canal_verify_callback, channel_gate
 from handlers.captcha import (
     captcha_gatekeeper,
@@ -428,7 +428,9 @@ async def on_message_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     3) Si el usuario está agregando/eliminando palabras prohibidas, se consume aquí.
     4) Si el usuario tiene una edición pendiente desde el menú de botones
        (ej. estaba escribiendo el nuevo mensaje de bienvenida), se consume aquí.
-    5) Si no, se comprueba si el mensaje es un disparador "brb" en texto plano.
+    5) Si no, se comprueba si es "unbrb" (solo el propietario, respondiendo
+       al mensaje de alguien AFK, se lo saca a la fuerza).
+    6) Si no, se comprueba si el mensaje es un disparador "brb" en texto plano.
     """
     if await try_consume_captcha_answer(update, context):
         return
@@ -449,6 +451,8 @@ async def on_message_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if await try_consume_pending_birthdate(update, context):
         return
     if await try_consume_fed_input(update, context):
+        return
+    if await unbrb_text_trigger(update, context):
         return
     await brb_text_trigger(update, context)
 

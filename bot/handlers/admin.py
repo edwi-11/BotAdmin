@@ -75,7 +75,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await _reply(update, error(resolved))
             return
 
-    perm = await can_grant_admin(context.bot, chat.id, executor.id, resolved.user_id)
+    perm = await can_grant_admin(context.bot, chat.id, executor.id, resolved.user_id, action="grant")
     if not perm.allowed:
         await _reply(update, error(perm.reason))
         return
@@ -115,7 +115,7 @@ async def unadmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await _reply(update, error(resolved))
         return
 
-    perm = await can_grant_admin(context.bot, chat.id, executor.id, resolved.user_id)
+    perm = await can_grant_admin(context.bot, chat.id, executor.id, resolved.user_id, action="revoke")
     if not perm.allowed:
         await _reply(update, error(perm.reason))
         return

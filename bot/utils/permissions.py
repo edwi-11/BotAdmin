@@ -173,10 +173,15 @@ async def can_moderate(bot: Bot, chat_id: int, executor_id: int, target_id: int)
     return PermissionResult(True)
 
 
-async def can_grant_admin(bot: Bot, chat_id: int, executor_id: int, target_id: int) -> PermissionResult:
-    """Solo el propietario puede otorgar o revocar administración."""
-    if is_owner(target_id):
-        return PermissionResult(False, "El propietario ya tiene control total; no aplica.")
+async def can_grant_admin(bot: Bot, chat_id: int, executor_id: int, target_id: int, *, action: str = "grant") -> PermissionResult:
+    """Solo el propietario puede otorgar o revocar administración.
+    Otorgar admin AL PROPIO propietario del bot está permitido a propósito
+    (es justo el caso de uso normal: el owner del bot todavía no es admin
+    de Telegram en ese grupo puntual, y quiere que el bot se lo dé). Lo
+    que sí sigue bloqueado es REVOCARLE la administración al propietario
+    por esta vía, para no dejarlo sin admin ahí por accidente."""
+    if action == "revoke" and is_owner(target_id):
+        return PermissionResult(False, "No se le puede revocar la administración al propietario del bot por acá.")
     if not is_owner(executor_id):
         return PermissionResult(False, "Solo el propietario puede otorgar o revocar administración.")
     return PermissionResult(True)

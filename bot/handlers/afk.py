@@ -29,12 +29,15 @@ from telegram.ext import ContextTypes
 
 from database import AfkRecord, Database
 from utils.formatting import escape_md, humanize_seconds, mention
+from utils.permissions import is_owner
 
 logger = logging.getLogger(__name__)
 
 # Coincide con "brb" al inicio del mensaje (sin importar mayúsculas/minúsculas),
 # seguido opcionalmente de un motivo. No dispara con palabras como "brbrb".
 _BRB_TEXT_PATTERN = re.compile(r"^brb\b[\s:,-]*(.*)$", re.IGNORECASE | re.DOTALL)
+# "unbrb" (sin "/"), sola o seguida de cualquier cosa al inicio del mensaje.
+_UNBRB_TEXT_PATTERN = re.compile(r"^unbrb\b", re.IGNORECASE)
 
 
 def _get_db(context: ContextTypes.DEFAULT_TYPE) -> Database:
@@ -113,6 +116,52 @@ async def brb_text_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     reason = match.group(1).strip() or None
     await _activate_afk(update, context, reason)
+    return True
+
+
+async def unbrb_text_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    Detecta el mensaje de texto plano "unbrb" (sin "/"), respondiendo al
+    mensaje de la persona a la que se le quiere sacar el estado BRB/AFK a
+    la fuerza. Solo el propietario del bot puede usarlo. Devuelve True si
+    el mensaje fue consumido (sea que haya funcionado o no), para que no
+    siga cayendo en otros handlers de texto plano.
+    """
+    message = update.effective_message
+    user = update.effective_user
+    if message is None or user is None or user.is_bot:
+        return False
+
+    text = (message.text or "").strip()
+    if not _UNBRB_TEXT_PATTERN.match(text):
+        return False
+
+    if not is_owner(user.id):
+        # No es el propietario: no reaccionamos ni damos pistas de que
+        # este comando existe, dejamos que el mensaje siga su curso
+        # normal (por si por casualidad alguien escribe "unbrb algo" sin
+        # saber de esto).
+        return False
+
+    target = message.reply_to_message.from_user if message.reply_to_message else None
+    if target is None:
+        await message.reply_text(
+            "Respondé al mensaje de la persona a la que le querés quitar el BRB con \"unbrb\"."
+        )
+        return True
+
+    db = _get_db(context)
+    cache = _get_cache(context)
+    record = cache.pop(target.id, None)
+    if record is None:
+        await message.reply_text(f"{escape_md(target.first_name)} no está en BRB ahora mismo\\.", parse_mode=ParseMode.MARKDOWN_V2)
+        return True
+
+    await db.remove_afk(target.id)
+    await message.reply_text(
+        f"✅ El owner te ha removido el brb, {mention(target.id, target.first_name)}\\.",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
     return True
 
 
