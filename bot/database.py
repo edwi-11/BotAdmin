@@ -424,6 +424,31 @@ CREATE TABLE IF NOT EXISTS confessions (
     created_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_confessions_group ON confessions (group_id);
+
+-- Antiraid (handlers/antiraid.py): detección de expulsiones masivas.
+CREATE TABLE IF NOT EXISTS antiraid_settings (
+    group_id     INTEGER PRIMARY KEY,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    threshold    INTEGER NOT NULL DEFAULT 5,
+    window_secs  INTEGER NOT NULL DEFAULT 30,
+    action       TEXT NOT NULL DEFAULT 'demote',  -- 'alert' | 'demote'
+    updated_at   INTEGER NOT NULL
+);
+
+-- Registro de CADA expulsión/baneo con su autor. Es lo que permite
+-- detectar un "kick all" (muchas bajas del mismo autor en pocos
+-- segundos) y, después, saber a quién hay que reinvitar.
+CREATE TABLE IF NOT EXISTS raid_removals (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id      INTEGER NOT NULL,
+    actor_id      INTEGER NOT NULL,
+    actor_name    TEXT,
+    victim_id     INTEGER NOT NULL,
+    victim_name   TEXT,
+    victim_user   TEXT,
+    removed_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_raid_removals_group ON raid_removals (group_id, removed_at);
 """
 
 # Columnas que se añadieron después de la primera versión del esquema.
@@ -2099,6 +2124,69 @@ class Database:
         )
         row = await cursor.fetchone()
         return row["c"] if row else 0
+
+    # ------------------------------------------------------------------ #
+    # Antiraid (/antiraid, /recuperar)
+    # ------------------------------------------------------------------ #
+    async def get_antiraid_settings(self, group_id: int) -> aiosqlite.Row | None:
+        cursor = await self.conn.execute(
+            "SELECT * FROM antiraid_settings WHERE group_id = ?", (group_id,)
+        )
+        return await cursor.fetchone()
+
+    async def set_antiraid(
+        self, group_id: int, *, enabled: bool | None = None, threshold: int | None = None,
+        window_secs: int | None = None, action: str | None = None,
+    ) -> None:
+        current = await self.get_antiraid_settings(group_id)
+        base = {
+            "enabled": int(current["enabled"]) if current else 1,
+            "threshold": current["threshold"] if current else 5,
+            "window_secs": current["window_secs"] if current else 30,
+            "action": current["action"] if current else "demote",
+        }
+        if enabled is not None:
+            base["enabled"] = int(enabled)
+        if threshold is not None:
+            base["threshold"] = threshold
+        if window_secs is not None:
+            base["window_secs"] = window_secs
+        if action is not None:
+            base["action"] = action
+        await self.conn.execute(
+            "INSERT INTO antiraid_settings (group_id, enabled, threshold, window_secs, action, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(group_id) DO UPDATE SET enabled = excluded.enabled, threshold = excluded.threshold, "
+            "window_secs = excluded.window_secs, action = excluded.action, updated_at = excluded.updated_at",
+            (group_id, base["enabled"], base["threshold"], base["window_secs"], base["action"], int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def record_removal(
+        self, group_id: int, actor_id: int, actor_name: str | None,
+        victim_id: int, victim_name: str | None, victim_user: str | None,
+    ) -> None:
+        await self.conn.execute(
+            "INSERT INTO raid_removals (group_id, actor_id, actor_name, victim_id, victim_name, victim_user, removed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (group_id, actor_id, actor_name, victim_id, victim_name, victim_user, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def count_removals_by_actor(self, group_id: int, actor_id: int, since_ts: int) -> int:
+        cursor = await self.conn.execute(
+            "SELECT COUNT(*) AS c FROM raid_removals WHERE group_id = ? AND actor_id = ? AND removed_at >= ?",
+            (group_id, actor_id, since_ts),
+        )
+        row = await cursor.fetchone()
+        return row["c"] if row else 0
+
+    async def get_recent_removals(self, group_id: int, since_ts: int) -> list[aiosqlite.Row]:
+        cursor = await self.conn.execute(
+            "SELECT * FROM raid_removals WHERE group_id = ? AND removed_at >= ? ORDER BY removed_at",
+            (group_id, since_ts),
+        )
+        return await cursor.fetchall()
 
     # ------------------------------------------------------------------ #
     # Actualización completa de un mensaje recurrente ya existente

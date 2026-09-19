@@ -1,57 +1,73 @@
-Sistema de Confesiones anónimas — 4 archivos
-==============================================
+Antiraid — protección contra expulsiones masivas (3 archivos)
+===============================================================
 
-1. handlers/confessions.py (NUEVO) — todo el sistema
-2. utils/confession_image.py (NUEVO) — genera las dos imágenes
-3. database.py (MODIFICADO) — 2 tablas nuevas + sus métodos
-4. main.py (MODIFICADO) — registra comandos, deep link y triggers
+1. handlers/antiraid.py (NUEVO)
+2. database.py (MODIFICADO) — 2 tablas nuevas + métodos
+3. main.py (MODIFICADO) — registra el handler y los 2 comandos
 
-CÓMO FUNCIONA
--------------
-1) Un ADMIN escribe /confesion en el grupo (también funciona escribiendo
-   "confesión" o "confesion" sola, sin barra, como pediste). El bot:
-   - activa las confesiones en ese grupo,
-   - publica una imagen-cartel con los 3 pasos explicados,
-   - con un botón "✍️ Hacer una confesión" que abre su chat privado.
+PRIMERO, LO TÉCNICO QUE IMPORTA
+--------------------------------
+No existen usuarios con "poderes fuera de Telegram". Todo lo que se
+puede hacer en un grupo pasa por la misma API que usa este bot. Un
+"kick all" que saca a todos menos a los admins es exactamente lo que
+hace un script (userbot con Telethon/Pyrogram) corriendo en una cuenta
+QUE TENÍA PERMISO DE EXPULSAR en ese grupo. No es magia ni acceso
+especial: es admin + un bucle.
 
-2) El usuario toca el botón → cae en el privado del bot, que le pide
-   que escriba su confesión en un solo mensaje.
+Y el personal de Telegram no hace eso: ellos actúan a nivel de cuentas o
+del grupo entero (lo suspenden), no entran a vaciarte la sala miembro
+por miembro.
 
-3) El usuario la escribe → el bot:
-   - la publica en el grupo como una tarjeta con el texto (numerada
-     #1, #2, #3... por grupo), con el mismo botón abajo para que otros
-     manden la suya,
-   - y le confirma por privado: "✅ Listo, tu confesión se mandó al
-     grupo [nombre]".
+Esto importa porque cambia cuál es la defensa real: el agujero es QUIÉN
+TIENE PERMISO DE EXPULSAR, no un poder oculto. Revisá la lista de
+administradores de tus grupos y sacá "Banear usuarios" a todo el que no
+lo necesite de verdad — eso solo ya cierra el 90% del problema. Ojo
+también con bots de terceros que hayas puesto como admin: si el bot es
+malicioso o le robaron el token, puede hacer lo mismo.
 
-4) /parar (solo admins) corta las confesiones en ese grupo.
+QUÉ HACE ESTE SISTEMA
+----------------------
+Telegram avisa de cada cambio de miembro e incluye QUIÉN lo provocó. El
+bot ahora escucha eso y lleva la cuenta por autor:
 
-Comandos: /confesion (o /confesiones), /parar, /cancelar (para
-arrepentirse mientras la está escribiendo en el privado).
+ - Si alguien saca a 5 o más miembros en 30 segundos (configurable):
+   1. Intenta DEGRADARLO al instante (quitarle todos los permisos), que
+      es lo único que corta el ataque de verdad.
+   2. Avisa en el grupo y por privado a los propietarios, con nombre e ID.
+   3. Guarda la lista de TODOS los expulsados para reinvitarlos.
 
-DECISIONES QUE TOMÉ (avisame si querés cambiar alguna)
--------------------------------------------------------
-Como el anonimato invita a probar suerte, le puse tres frenos que no
-pediste explícitamente pero que en la práctica hacen falta:
- - Solo puede confesar quien es MIEMBRO REAL del grupo (se verifica
-   contra Telegram en el momento). Si no, cualquiera con el link podría
-   publicar en un grupo al que ni pertenece.
- - Máximo 3 confesiones por persona por hora y por grupo (constante
-   MAX_POR_HORA en handlers/confessions.py, cambiala si querés).
- - Las palabras prohibidas que ya tenga el grupo (/palabras) también se
-   aplican acá; si no, las confesiones serían un atajo para esquivar los
-   filtros del grupo.
+ - No se dispara con moderación normal (2-3 bans sueltos), ni con los
+   bans que hace el propio bot (/ban, warns, fban), ni con gente que se
+   va por su cuenta.
 
-PRIVACIDAD: el autor se guarda en la base SOLO por si alguna vez hay que
-rastrear un abuso, y para el límite anti-spam. No se muestra nunca en el
-grupo, ni en la tarjeta, ni en ningún comando.
+LÍMITE REAL, Y ES IMPORTANTE QUE LO SEPAS
+------------------------------------------
+Telegram solo permite que un bot degrade a administradores que ESE MISMO
+BOT promovió. Si al atacante lo promovió una persona, o es el creador del
+grupo, el bot NO puede degradarlo por más permisos que tenga — es una
+regla de Telegram, no una limitación que yo pueda sortear.
 
-Las imágenes reusan el estilo visual del ranking (mismo fondo oscuro con
-destellos, misma tipografía Poppins), así que se ven parte del mismo bot.
-El texto se ajusta solo: una confesión corta se ve grande y centrada, una
-larga se achica sola, y arriba de 600 caracteres se avisa antes de mandar.
+En ese caso el bot igual avisa en el acto y registra todo, y el mensaje
+de alerta te dice explícitamente que hay que sacarlo a mano y cómo. Por
+eso la prevención (quién tiene permiso de banear) sigue siendo lo más
+importante; esto es la red de contención, no un reemplazo.
+
+Consecuencia práctica útil: si promovés a tus admins CON EL BOT
+(/admin), el bot después sí puede degradarlos solo en caso de ataque.
+
+COMANDOS
+--------
+/antiraid           — ver estado y configuración
+/antiraid on|off    — activar/desactivar
+/antiraid <número>  — cambiar el umbral (entre 2 y 50)
+/recuperar [horas]  — quiénes fueron expulsados y por quién (24h por
+                      defecto), agrupado por responsable, con los IDs
+                      para poder reinvitarlos
+
+Viene ACTIVADO por defecto en todos los grupos, sin necesidad de
+configurarlo: una protección que hay que acordarse de encender no sirve
+justo el día del ataque.
 
 IMPORTANTE: este zip NO incluye ningún archivo de base de datos
-(bot.db). Nunca reemplaces database/bot.db con nada de un zip mío —
-esa carpeta es solo tuya, en el VPS. Las 2 tablas nuevas se crean solas
-al arrancar (CREATE TABLE IF NOT EXISTS).
+(bot.db). Nunca reemplaces database/bot.db con nada de un zip mío.
+Las 2 tablas nuevas se crean solas al arrancar.

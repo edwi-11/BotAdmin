@@ -27,14 +27,14 @@ Privacidad: el autor se guarda en la base SOLO para poder rastrear un
 abuso si hiciera falta y para el límite anti-spam. No se muestra en el
 grupo, ni en la tarjeta, ni en ningún comando.
 
-Anti-abuso (importante en una función anónima, porque el anonimato
-invita a probar suerte):
+Anti-abuso (lo mínimo, porque el anonimato invita a probar suerte):
  - Solo se aceptan confesiones para grupos donde la persona es miembro de
    verdad (se verifica contra Telegram en el momento).
- - Límite de MAX_POR_HORA confesiones por persona y por grupo.
  - Las palabras prohibidas que el grupo ya tenga configuradas
    (/palabras) se aplican también acá, para que las confesiones no sean
    un agujero por donde esquivar los filtros del grupo.
+ - NO hay límite de cantidad por persona: se pueden mandar todas las
+   confesiones que se quieran (ver MAX_POR_HORA más abajo).
 """
 from __future__ import annotations
 
@@ -63,7 +63,11 @@ _CONFESION_TEXT_PATTERN = re.compile(r"^/?confesi[oó]n(?:es)?$", re.IGNORECASE)
 
 _START_CONF_RE = re.compile(r"^conf_(-?\d+)$")
 
-MAX_POR_HORA = 3
+# Límite de confesiones por persona, por grupo y por hora.
+# 0 = sin límite (es lo que pidió el owner). Si algún día hace falta
+# frenar un abuso, poner acá un número (por ejemplo 3) vuelve a activar
+# el tope sin tocar nada más.
+MAX_POR_HORA = 0
 _PENDING_KEY = "pending_confession"
 
 
@@ -258,14 +262,15 @@ async def try_consume_confession_input(update: Update, context: ContextTypes.DEF
         )
         return True
 
-    recientes = await db.count_recent_confessions(group_id, user.id, int(time.time()) - 3600)
-    if recientes >= MAX_POR_HORA:
-        context.user_data.pop(_PENDING_KEY, None)
-        await message.reply_text(
-            f"Ya mandaste {recientes} confesiones a ese grupo en la última hora. "
-            "Esperá un rato antes de mandar otra."
-        )
-        return True
+    if MAX_POR_HORA > 0:
+        recientes = await db.count_recent_confessions(group_id, user.id, int(time.time()) - 3600)
+        if recientes >= MAX_POR_HORA:
+            context.user_data.pop(_PENDING_KEY, None)
+            await message.reply_text(
+                f"Ya mandaste {recientes} confesiones a ese grupo en la última hora. "
+                "Esperá un rato antes de mandar otra."
+            )
+            return True
 
     # Las palabras prohibidas del grupo también valen acá: si no, las
     # confesiones serían un atajo para esquivar los filtros del grupo.

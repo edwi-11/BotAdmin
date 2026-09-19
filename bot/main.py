@@ -134,6 +134,7 @@ from handlers.economy import (
     saldo_command, tienda_command, trabajo_command, trabajos_command,
     tragamonedas_command, transferir_command,
 )
+from handlers.antiraid import antiraid_command, on_member_removed, recuperar_command
 from handlers.confessions import (
     cancelar_confesion_command, confesion_command, confesion_text_trigger,
     handle_confession_start_deeplink, parar_command, try_consume_confession_input,
@@ -213,6 +214,8 @@ BOT_COMMANDS = [
     BotCommand("fedsync", "Re-aplicar todos los baneos de la federación en sus grupos"),
     BotCommand("confesion", "Activar las confesiones anónimas en el grupo"),
     BotCommand("parar", "Cortar las confesiones anónimas del grupo"),
+    BotCommand("antiraid", "Protección contra expulsiones masivas"),
+    BotCommand("recuperar", "Ver quiénes fueron expulsados y por quién"),
     BotCommand("top", "Ver el top 10 de más mensajes del grupo"),
 ]
 
@@ -579,6 +582,9 @@ def build_application() -> Application:
         MessageHandler(filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL, track_activity), group=-7
     )
     application.add_handler(ChatMemberHandler(on_bot_membership_change, ChatMemberHandler.MY_CHAT_MEMBER))
+    # Antiraid: necesita ver TODOS los cambios de miembros (no solo los del
+    # propio bot) para poder detectar expulsiones masivas y atribuirlas.
+    application.add_handler(ChatMemberHandler(on_member_removed, ChatMemberHandler.CHAT_MEMBER))
     application.add_handler(CommandHandler("activar", activar_command))
     application.add_handler(CommandHandler("desactivar", desactivar_command))
 
@@ -693,6 +699,10 @@ def build_application() -> Application:
     # --- Confesiones anónimas (handlers/confessions.py) ---
     application.add_handler(CommandHandler(["confesion", "confesiones"], confesion_command))
     application.add_handler(CommandHandler("parar", parar_command))
+
+    # --- Antiraid (handlers/antiraid.py) ---
+    application.add_handler(CommandHandler("antiraid", antiraid_command))
+    application.add_handler(CommandHandler("recuperar", recuperar_command))
     application.add_handler(CommandHandler("cancelar", cancelar_confesion_command))
     application.add_handler(CallbackQueryHandler(fedpromote_callback, pattern=r"^fedp:"))
     application.add_handler(CallbackQueryHandler(ranking_callback, pattern=r"^ranking_(today|week|all)$"))
