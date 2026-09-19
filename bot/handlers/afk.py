@@ -123,9 +123,11 @@ async def unbrb_text_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """
     Detecta el mensaje de texto plano "unbrb" (sin "/"), respondiendo al
     mensaje de la persona a la que se le quiere sacar el estado BRB/AFK a
-    la fuerza. Solo el propietario del bot puede usarlo. Devuelve True si
-    el mensaje fue consumido (sea que haya funcionado o no), para que no
-    siga cayendo en otros handlers de texto plano.
+    la fuerza. Solo el propietario del bot, o alguien a quien el
+    propietario le haya dado el permiso "unbrb" con /permiso, puede
+    usarlo. Devuelve True si el mensaje fue consumido (sea que haya
+    funcionado o no), para que no siga cayendo en otros handlers de texto
+    plano.
     """
     message = update.effective_message
     user = update.effective_user
@@ -136,11 +138,10 @@ async def unbrb_text_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not _UNBRB_TEXT_PATTERN.match(text):
         return False
 
-    if not is_owner(user.id):
-        # No es el propietario: no reaccionamos ni damos pistas de que
-        # este comando existe, dejamos que el mensaje siga su curso
-        # normal (por si por casualidad alguien escribe "unbrb algo" sin
-        # saber de esto).
+    db = _get_db(context)
+    if not (is_owner(user.id) or await db.has_permission(user.id, "unbrb")):
+        # No tiene permiso: no reaccionamos ni damos pistas de que este
+        # comando existe, dejamos que el mensaje siga su curso normal.
         return False
 
     target = message.reply_to_message.from_user if message.reply_to_message else None
@@ -150,7 +151,6 @@ async def unbrb_text_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return True
 
-    db = _get_db(context)
     cache = _get_cache(context)
     record = cache.pop(target.id, None)
     if record is None:

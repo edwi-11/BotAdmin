@@ -389,6 +389,19 @@ CREATE TABLE IF NOT EXISTS fed_imports (
     total        INTEGER NOT NULL,
     imported_at  INTEGER NOT NULL
 );
+
+-- Permisos especiales que el propietario le puede dar a usuarios
+-- puntuales para funciones que normalmente son solo-owner (por ahora,
+-- "unbrb" — sacarle el BRB a otro a la fuerza — ver handlers/afk.py y
+-- /permiso en main.py). Genérica a propósito para poder sumar más
+-- permisos en el futuro sin tocar el esquema de nuevo.
+CREATE TABLE IF NOT EXISTS bot_permissions (
+    user_id      INTEGER NOT NULL,
+    permission   TEXT NOT NULL,
+    granted_by   INTEGER NOT NULL,
+    granted_at   INTEGER NOT NULL,
+    PRIMARY KEY (user_id, permission)
+);
 """
 
 # Columnas que se añadieron después de la primera versión del esquema.
@@ -1989,6 +2002,37 @@ class Database:
             (fed_id, imported_by, total, int(time.time())),
         )
         await self.conn.commit()
+
+    # ------------------------------------------------------------------ #
+    # Permisos especiales (/permiso, /quitarpermiso)
+    # ------------------------------------------------------------------ #
+    async def grant_permission(self, user_id: int, permission: str, granted_by: int) -> None:
+        await self.conn.execute(
+            "INSERT INTO bot_permissions (user_id, permission, granted_by, granted_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(user_id, permission) DO UPDATE SET granted_by = excluded.granted_by, granted_at = excluded.granted_at",
+            (user_id, permission, granted_by, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def revoke_permission(self, user_id: int, permission: str) -> bool:
+        cursor = await self.conn.execute(
+            "DELETE FROM bot_permissions WHERE user_id = ? AND permission = ?", (user_id, permission)
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def has_permission(self, user_id: int, permission: str) -> bool:
+        cursor = await self.conn.execute(
+            "SELECT 1 FROM bot_permissions WHERE user_id = ? AND permission = ?", (user_id, permission)
+        )
+        return await cursor.fetchone() is not None
+
+    async def get_users_with_permission(self, permission: str) -> list[int]:
+        cursor = await self.conn.execute(
+            "SELECT user_id FROM bot_permissions WHERE permission = ?", (permission,)
+        )
+        rows = await cursor.fetchall()
+        return [row["user_id"] for row in rows]
 
     # ------------------------------------------------------------------ #
     # Actualización completa de un mensaje recurrente ya existente

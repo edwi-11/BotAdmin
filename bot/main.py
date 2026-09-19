@@ -28,6 +28,7 @@ from telegram.ext import (
     ChatMemberHandler,
     CommandHandler,
     ContextTypes,
+    Defaults,
     InlineQueryHandler,
     MessageHandler,
     PreCheckoutQueryHandler,
@@ -42,7 +43,7 @@ from handlers.activation import (
     group_gate,
     on_bot_membership_change,
 )
-from handlers.admin import admin_command, unadmin_command
+from handlers.admin import admin_command, permiso_command, quitarpermiso_command, unadmin_command
 from handlers.activity_ranking import ranking_callback, top_command
 from utils.activity_stats import schedule_activity_resets, track_activity
 from utils.weekly_summary import count_new_members, schedule_weekly_summary
@@ -495,6 +496,20 @@ def build_application() -> Application:
     application = (
         ApplicationBuilder()
         .token(settings.bot_token)
+        .defaults(
+            # allow_sending_without_reply=True: si un handler responde a un
+            # mensaje que ya no existe en ESE chat (se borró, o — como en
+            # el modo remoto de /owner — el mensaje "original" en realidad
+            # vive en el chat privado, no en el grupo al que se reenvía el
+            # comando), Telegram simplemente manda el mensaje sin citar
+            # nada, en vez de fallar por completo con "message to reply
+            # not found". Sin esto, CUALQUIER comando ejecutado por modo
+            # remoto fallaba en silencio (la acción de fondo podía llegar
+            # a aplicarse igual, pero la confirmación de texto nunca se
+            # mandaba, y el error quedaba atrapado por dentro de la
+            # librería sin que remote_dispatch se enterara).
+            Defaults(allow_sending_without_reply=True)
+        )
         .post_init(post_init)
         .post_shutdown(post_shutdown)
         .build()
@@ -608,6 +623,8 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("unwarn", unwarn_command))
     application.add_handler(CommandHandler("delwarn", delwarn_command))
     application.add_handler(CommandHandler("admin", admin_command))
+    application.add_handler(CommandHandler("permiso", permiso_command))
+    application.add_handler(CommandHandler("quitarpermiso", quitarpermiso_command))
     application.add_handler(CommandHandler("unadmin", unadmin_command))
     application.add_handler(CommandHandler("del", del_command))
     application.add_handler(CommandHandler("id", id_command))

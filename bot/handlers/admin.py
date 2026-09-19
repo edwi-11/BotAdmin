@@ -225,3 +225,59 @@ async def staff_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     lines.extend(admin_lines or ["Ninguno"])
 
     await _reply(update, "\n".join(lines))
+
+
+# --------------------------------------------------------------------- #
+# /permiso /quitarpermiso — dar/sacar permisos especiales de bot (hoy por
+# hoy, el único que existe es "unbrb": ver handlers/afk.py). No están
+# atados a un grupo puntual (a diferencia de /admin), son permisos del
+# bot en general, así que funcionan tanto en privado como en un grupo,
+# respondiendo al mensaje de la persona o con @usuario/ID.
+# --------------------------------------------------------------------- #
+PERMISSION_LABELS = {
+    "unbrb": "sacarle el BRB a otra persona a la fuerza (unbrb)",
+}
+
+
+async def permiso_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    message = update.effective_message
+    db = _get_db(context)
+
+    if not is_owner(user.id):
+        await message.reply_text("🔒 Este comando es solo para el propietario del bot.")
+        return
+
+    resolved = await resolve_target(update, db, context.args)
+    if isinstance(resolved, str):
+        await message.reply_text(error(resolved))
+        return
+    if is_owner(resolved.user_id):
+        await message.reply_text(error("El propietario ya puede usar todo, no hace falta darle permisos."))
+        return
+
+    await db.grant_permission(resolved.user_id, "unbrb", user.id)
+    await message.reply_text(
+        success(f"{resolved.display_name} ahora puede {PERMISSION_LABELS['unbrb']}."),
+    )
+
+
+async def quitarpermiso_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    message = update.effective_message
+    db = _get_db(context)
+
+    if not is_owner(user.id):
+        await message.reply_text("🔒 Este comando es solo para el propietario del bot.")
+        return
+
+    resolved = await resolve_target(update, db, context.args)
+    if isinstance(resolved, str):
+        await message.reply_text(error(resolved))
+        return
+
+    removed = await db.revoke_permission(resolved.user_id, "unbrb")
+    if removed:
+        await message.reply_text(success(f"Le saqué a {resolved.display_name} el permiso de {PERMISSION_LABELS['unbrb']}."))
+    else:
+        await message.reply_text(error(f"{resolved.display_name} no tenía ese permiso."))

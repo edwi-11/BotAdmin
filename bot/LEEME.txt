@@ -1,44 +1,39 @@
-2 arreglos — 4 archivos
-========================
+Comando /permiso — 4 archivos
+================================
 
-1) /admin no te daba admin a vos mismo (el owner del bot)
---------------------------------------------------------
-utils/permissions.py (MODIFICADO)
-   can_grant_admin() bloqueaba SIEMPRE otorgarle admin a cualquiera que
-   fuera "owner" del bot — pensado para evitar acciones raras, pero eso
-   te bloqueaba a vos mismo justo en el caso normal: pedirte a vos mismo
-   /admin en un grupo donde todavía no sos admin de Telegram, aunque el
-   bot sí tenga todos los permisos ahí. Separé la regla: otorgar admin
-   al propietario ahora SÍ está permitido; revocárselo (con /unadmin)
-   sigue bloqueado, para no dejarte sin admin en un grupo por accidente.
+1. database.py (MODIFICADO)
+   Nueva tabla bot_permissions (user_id, permission) — genérica a
+   propósito, para poder sumar otros permisos especiales en el futuro
+   sin tocar el esquema de nuevo. Métodos: grant_permission,
+   revoke_permission, has_permission, get_users_with_permission.
+   Probado a mano (dar, chequear, sacar, volver a chequear).
 
-handlers/admin.py (MODIFICADO — 2 líneas)
-   Actualicé las dos llamadas a can_grant_admin() para indicar si la
-   acción es "grant" (otorgar, en /admin) o "revoke" (revocar, en
-   /unadmin), que es lo que ahora distingue la regla de arriba.
+2. handlers/admin.py (MODIFICADO)
+   Nuevos comandos, solo para el propietario:
+   - /permiso (respondiendo al mensaje de alguien, o con @usuario/ID):
+     le da a esa persona el permiso "unbrb".
+   - /quitarpermiso: se lo saca.
 
-Con esto, /admin (sin argumentos, o respondiendo/nombrándote a vos
-mismo) ya te da admin de verdad en el grupo, con los permisos que el
-bot ya tiene definidos (ADMIN_PERMISSIONS en admin.py).
+3. handlers/afk.py (MODIFICADO — 1 línea de lógica)
+   unbrb_text_trigger ahora acepta tanto al propietario como a
+   cualquiera con el permiso "unbrb" otorgado por /permiso.
 
-2) Comando "unbrb" para sacarle el BRB a alguien a la fuerza
----------------------------------------------------------------
-handlers/afk.py (MODIFICADO)
-   Nueva función unbrb_text_trigger(): respondiendo al mensaje de
-   alguien que está en BRB/AFK, escribís "unbrb" (sin "/", igual que
-   "brb" ya funciona sin barra) y se le saca el estado ahí mismo, con el
-   mensaje "✅ El owner te ha removido el brb, [nombre]." — SOLO
-   funciona si quien lo escribe sos vos, el propietario del bot; si lo
-   escribe cualquier otra persona, no hace nada (el mensaje sigue su
-   curso normal, no delata que existe este comando).
+4. main.py (MODIFICADO — solo registra los 2 comandos nuevos)
 
-main.py (MODIFICADO — 2 líneas)
-   Se engancha unbrb_text_trigger al router de mensajes de texto plano,
-   antes del "brb" normal (ya que "unbrb" no coincide con el patrón de
-   "brb" de todas formas, pero por prolijidad se revisa primero).
+Uso:
+    Respondiendo al mensaje de la persona: /permiso
+    O: /permiso @usuario   /  /permiso 123456789
 
-Uso: respondé al mensaje de la persona que puso brb, escribí "unbrb", y
-listo.
+    Para sacárselo: /quitarpermiso (misma sintaxis)
+
+Con el permiso ya dado, esa persona puede usar "unbrb" (sin "/",
+respondiendo al mensaje de alguien en BRB) igual que el propietario,
+con el mismo mensaje "✅ El owner te ha removido el brb, [nombre]."
+
+NOTA (no relacionado, solo un aviso de paso): al revisar admin.py para
+esto, noté que /admins y /staff ya estaban escritos en el código pero
+nunca se registraron en main.py — quedan sin tocar por ahora, pero
+avisame si querés que los active también.
 
 IMPORTANTE: este zip NO incluye ningún archivo de base de datos
 (bot.db). Nunca reemplaces database/bot.db con nada de un zip mío —
