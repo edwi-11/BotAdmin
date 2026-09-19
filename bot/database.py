@@ -402,6 +402,28 @@ CREATE TABLE IF NOT EXISTS bot_permissions (
     granted_at   INTEGER NOT NULL,
     PRIMARY KEY (user_id, permission)
 );
+
+-- Sistema de confesiones anónimas (handlers/confessions.py): un grupo las
+-- activa con /confesion y las corta con /parar.
+CREATE TABLE IF NOT EXISTS confession_settings (
+    group_id     INTEGER PRIMARY KEY,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    enabled_by   INTEGER,
+    updated_at   INTEGER NOT NULL
+);
+
+-- El autor (user_id) se guarda SOLO para moderación (poder rastrear un
+-- abuso si hace falta) y para el límite anti-spam; nunca se muestra en el
+-- grupo ni se expone en ningún comando.
+CREATE TABLE IF NOT EXISTS confessions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id    INTEGER NOT NULL,
+    numero      INTEGER NOT NULL,
+    user_id     INTEGER NOT NULL,
+    text        TEXT NOT NULL,
+    created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_confessions_group ON confessions (group_id);
 """
 
 # Columnas que se añadieron después de la primera versión del esquema.
@@ -2033,6 +2055,50 @@ class Database:
         )
         rows = await cursor.fetchall()
         return [row["user_id"] for row in rows]
+
+    # ------------------------------------------------------------------ #
+    # Confesiones anónimas (/confesion, /parar)
+    # ------------------------------------------------------------------ #
+    async def set_confessions_enabled(self, group_id: int, enabled: bool, enabled_by: int) -> None:
+        await self.conn.execute(
+            "INSERT INTO confession_settings (group_id, enabled, enabled_by, updated_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(group_id) DO UPDATE SET enabled = excluded.enabled, "
+            "enabled_by = excluded.enabled_by, updated_at = excluded.updated_at",
+            (group_id, int(enabled), enabled_by, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def are_confessions_enabled(self, group_id: int) -> bool:
+        cursor = await self.conn.execute(
+            "SELECT enabled FROM confession_settings WHERE group_id = ?", (group_id,)
+        )
+        row = await cursor.fetchone()
+        return bool(row["enabled"]) if row else False
+
+    async def add_confession(self, group_id: int, user_id: int, text: str) -> int:
+        """Guarda la confesión y devuelve su número correlativo dentro de
+        ese grupo (#1, #2, ...), que es lo que se muestra en la tarjeta."""
+        cursor = await self.conn.execute(
+            "SELECT COALESCE(MAX(numero), 0) AS last FROM confessions WHERE group_id = ?", (group_id,)
+        )
+        row = await cursor.fetchone()
+        numero = (row["last"] if row else 0) + 1
+        await self.conn.execute(
+            "INSERT INTO confessions (group_id, numero, user_id, text, created_at) VALUES (?, ?, ?, ?, ?)",
+            (group_id, numero, user_id, text, int(time.time())),
+        )
+        await self.conn.commit()
+        return numero
+
+    async def count_recent_confessions(self, group_id: int, user_id: int, since_ts: int) -> int:
+        """Cuántas confesiones mandó esta persona a este grupo desde
+        `since_ts` (para el límite anti-spam)."""
+        cursor = await self.conn.execute(
+            "SELECT COUNT(*) AS c FROM confessions WHERE group_id = ? AND user_id = ? AND created_at >= ?",
+            (group_id, user_id, since_ts),
+        )
+        row = await cursor.fetchone()
+        return row["c"] if row else 0
 
     # ------------------------------------------------------------------ #
     # Actualización completa de un mensaje recurrente ya existente

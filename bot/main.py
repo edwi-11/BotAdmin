@@ -134,6 +134,10 @@ from handlers.economy import (
     saldo_command, tienda_command, trabajo_command, trabajos_command,
     tragamonedas_command, transferir_command,
 )
+from handlers.confessions import (
+    cancelar_confesion_command, confesion_command, confesion_text_trigger,
+    handle_confession_start_deeplink, parar_command, try_consume_confession_input,
+)
 from handlers.federations import (
     cancelarfed_command, fban_command, fbanstat_command, fchat_command,
     feddemote_command, fedpromote_callback, fedpromote_command,
@@ -207,6 +211,8 @@ BOT_COMMANDS = [
     BotCommand("import", "Importar una lista de baneados (.csv)"),
     BotCommand("fbanstat", "Consultar los baneos de federación de alguien"),
     BotCommand("fedsync", "Re-aplicar todos los baneos de la federación en sus grupos"),
+    BotCommand("confesion", "Activar las confesiones anónimas en el grupo"),
+    BotCommand("parar", "Cortar las confesiones anónimas del grupo"),
     BotCommand("top", "Ver el top 10 de más mensajes del grupo"),
 ]
 
@@ -429,9 +435,13 @@ async def on_message_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     3) Si el usuario está agregando/eliminando palabras prohibidas, se consume aquí.
     4) Si el usuario tiene una edición pendiente desde el menú de botones
        (ej. estaba escribiendo el nuevo mensaje de bienvenida), se consume aquí.
-    5) Si no, se comprueba si es "unbrb" (solo el propietario, respondiendo
-       al mensaje de alguien AFK, se lo saca a la fuerza).
-    6) Si no, se comprueba si el mensaje es un disparador "brb" en texto plano.
+    5) Si el usuario está escribiendo una confesión por privado (llegó ahí
+       tocando el botón del cartel de /confesion), se consume aquí.
+    5.1) Si en un grupo alguien escribió "confesión" sola (sin barra), se
+       trata igual que /confesion.
+    6) Si no, se comprueba si es "unbrb" (el propietario o alguien con el
+       permiso, respondiendo al mensaje de alguien AFK, se lo saca a la fuerza).
+    7) Si no, se comprueba si el mensaje es un disparador "brb" en texto plano.
     """
     if await try_consume_captcha_answer(update, context):
         return
@@ -452,6 +462,10 @@ async def on_message_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if await try_consume_pending_birthdate(update, context):
         return
     if await try_consume_fed_input(update, context):
+        return
+    if await try_consume_confession_input(update, context):
+        return
+    if await confesion_text_trigger(update, context):
         return
     if await unbrb_text_trigger(update, context):
         return
@@ -484,6 +498,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
 
     if await handle_secret_start_deeplink(update, context):
+        return
+    if await handle_confession_start_deeplink(update, context):
         return
     await menu_command(update, context)
 
@@ -673,6 +689,11 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("import", import_command))
     application.add_handler(CommandHandler("fbanstat", fbanstat_command))
     application.add_handler(CommandHandler("fedsync", fedsync_command))
+
+    # --- Confesiones anónimas (handlers/confessions.py) ---
+    application.add_handler(CommandHandler(["confesion", "confesiones"], confesion_command))
+    application.add_handler(CommandHandler("parar", parar_command))
+    application.add_handler(CommandHandler("cancelar", cancelar_confesion_command))
     application.add_handler(CallbackQueryHandler(fedpromote_callback, pattern=r"^fedp:"))
     application.add_handler(CallbackQueryHandler(ranking_callback, pattern=r"^ranking_(today|week|all)$"))
 

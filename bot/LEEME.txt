@@ -1,40 +1,57 @@
-Comando /permiso — 4 archivos
-================================
+Sistema de Confesiones anónimas — 4 archivos
+==============================================
 
-1. database.py (MODIFICADO)
-   Nueva tabla bot_permissions (user_id, permission) — genérica a
-   propósito, para poder sumar otros permisos especiales en el futuro
-   sin tocar el esquema de nuevo. Métodos: grant_permission,
-   revoke_permission, has_permission, get_users_with_permission.
-   Probado a mano (dar, chequear, sacar, volver a chequear).
+1. handlers/confessions.py (NUEVO) — todo el sistema
+2. utils/confession_image.py (NUEVO) — genera las dos imágenes
+3. database.py (MODIFICADO) — 2 tablas nuevas + sus métodos
+4. main.py (MODIFICADO) — registra comandos, deep link y triggers
 
-2. handlers/admin.py (MODIFICADO)
-   Nuevos comandos, solo para el propietario:
-   - /permiso (respondiendo al mensaje de alguien, o con @usuario/ID):
-     le da a esa persona el permiso "unbrb".
-   - /quitarpermiso: se lo saca.
+CÓMO FUNCIONA
+-------------
+1) Un ADMIN escribe /confesion en el grupo (también funciona escribiendo
+   "confesión" o "confesion" sola, sin barra, como pediste). El bot:
+   - activa las confesiones en ese grupo,
+   - publica una imagen-cartel con los 3 pasos explicados,
+   - con un botón "✍️ Hacer una confesión" que abre su chat privado.
 
-3. handlers/afk.py (MODIFICADO — 1 línea de lógica)
-   unbrb_text_trigger ahora acepta tanto al propietario como a
-   cualquiera con el permiso "unbrb" otorgado por /permiso.
+2) El usuario toca el botón → cae en el privado del bot, que le pide
+   que escriba su confesión en un solo mensaje.
 
-4. main.py (MODIFICADO — solo registra los 2 comandos nuevos)
+3) El usuario la escribe → el bot:
+   - la publica en el grupo como una tarjeta con el texto (numerada
+     #1, #2, #3... por grupo), con el mismo botón abajo para que otros
+     manden la suya,
+   - y le confirma por privado: "✅ Listo, tu confesión se mandó al
+     grupo [nombre]".
 
-Uso:
-    Respondiendo al mensaje de la persona: /permiso
-    O: /permiso @usuario   /  /permiso 123456789
+4) /parar (solo admins) corta las confesiones en ese grupo.
 
-    Para sacárselo: /quitarpermiso (misma sintaxis)
+Comandos: /confesion (o /confesiones), /parar, /cancelar (para
+arrepentirse mientras la está escribiendo en el privado).
 
-Con el permiso ya dado, esa persona puede usar "unbrb" (sin "/",
-respondiendo al mensaje de alguien en BRB) igual que el propietario,
-con el mismo mensaje "✅ El owner te ha removido el brb, [nombre]."
+DECISIONES QUE TOMÉ (avisame si querés cambiar alguna)
+-------------------------------------------------------
+Como el anonimato invita a probar suerte, le puse tres frenos que no
+pediste explícitamente pero que en la práctica hacen falta:
+ - Solo puede confesar quien es MIEMBRO REAL del grupo (se verifica
+   contra Telegram en el momento). Si no, cualquiera con el link podría
+   publicar en un grupo al que ni pertenece.
+ - Máximo 3 confesiones por persona por hora y por grupo (constante
+   MAX_POR_HORA en handlers/confessions.py, cambiala si querés).
+ - Las palabras prohibidas que ya tenga el grupo (/palabras) también se
+   aplican acá; si no, las confesiones serían un atajo para esquivar los
+   filtros del grupo.
 
-NOTA (no relacionado, solo un aviso de paso): al revisar admin.py para
-esto, noté que /admins y /staff ya estaban escritos en el código pero
-nunca se registraron en main.py — quedan sin tocar por ahora, pero
-avisame si querés que los active también.
+PRIVACIDAD: el autor se guarda en la base SOLO por si alguna vez hay que
+rastrear un abuso, y para el límite anti-spam. No se muestra nunca en el
+grupo, ni en la tarjeta, ni en ningún comando.
+
+Las imágenes reusan el estilo visual del ranking (mismo fondo oscuro con
+destellos, misma tipografía Poppins), así que se ven parte del mismo bot.
+El texto se ajusta solo: una confesión corta se ve grande y centrada, una
+larga se achica sola, y arriba de 600 caracteres se avisa antes de mandar.
 
 IMPORTANTE: este zip NO incluye ningún archivo de base de datos
 (bot.db). Nunca reemplaces database/bot.db con nada de un zip mío —
-esa carpeta es solo tuya, en el VPS.
+esa carpeta es solo tuya, en el VPS. Las 2 tablas nuevas se crean solas
+al arrancar (CREATE TABLE IF NOT EXISTS).
