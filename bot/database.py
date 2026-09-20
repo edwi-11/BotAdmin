@@ -425,6 +425,17 @@ CREATE TABLE IF NOT EXISTS confessions (
 );
 CREATE INDEX IF NOT EXISTS idx_confessions_group ON confessions (group_id);
 
+-- Reacciones a confesiones: una por persona por confesión (si toca otro
+-- emoji, se le cambia; si toca el mismo de nuevo, se saca -ver
+-- handlers/confessions.py::confession_reaction_callback).
+CREATE TABLE IF NOT EXISTS confession_reactions (
+    confession_id  INTEGER NOT NULL,
+    user_id        INTEGER NOT NULL,
+    emoji          TEXT NOT NULL,
+    reacted_at     INTEGER NOT NULL,
+    PRIMARY KEY (confession_id, user_id)
+);
+
 -- Antiraid (handlers/antiraid.py): detección de expulsiones masivas.
 CREATE TABLE IF NOT EXISTS antiraid_settings (
     group_id     INTEGER PRIMARY KEY,
@@ -2100,20 +2111,57 @@ class Database:
         row = await cursor.fetchone()
         return bool(row["enabled"]) if row else False
 
-    async def add_confession(self, group_id: int, user_id: int, text: str) -> int:
-        """Guarda la confesión y devuelve su número correlativo dentro de
-        ese grupo (#1, #2, ...), que es lo que se muestra en la tarjeta."""
+    async def add_confession(self, group_id: int, user_id: int, text: str) -> tuple[int, int]:
+        """Guarda la confesión y devuelve (id interno, número correlativo
+        dentro de ese grupo). El número (#1, #2, ...) es lo que se muestra
+        en la tarjeta; el id interno es el que usan las reacciones."""
         cursor = await self.conn.execute(
             "SELECT COALESCE(MAX(numero), 0) AS last FROM confessions WHERE group_id = ?", (group_id,)
         )
         row = await cursor.fetchone()
         numero = (row["last"] if row else 0) + 1
-        await self.conn.execute(
+        cursor = await self.conn.execute(
             "INSERT INTO confessions (group_id, numero, user_id, text, created_at) VALUES (?, ?, ?, ?, ?)",
             (group_id, numero, user_id, text, int(time.time())),
         )
         await self.conn.commit()
-        return numero
+        return cursor.lastrowid, numero
+
+    async def get_confession(self, confession_id: int) -> aiosqlite.Row | None:
+        cursor = await self.conn.execute("SELECT * FROM confessions WHERE id = ?", (confession_id,))
+        return await cursor.fetchone()
+
+    # --- Reacciones a confesiones --- #
+    async def set_confession_reaction(self, confession_id: int, user_id: int, emoji: str) -> None:
+        await self.conn.execute(
+            "INSERT INTO confession_reactions (confession_id, user_id, emoji, reacted_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(confession_id, user_id) DO UPDATE SET emoji = excluded.emoji, reacted_at = excluded.reacted_at",
+            (confession_id, user_id, emoji, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def remove_confession_reaction(self, confession_id: int, user_id: int) -> None:
+        await self.conn.execute(
+            "DELETE FROM confession_reactions WHERE confession_id = ? AND user_id = ?",
+            (confession_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def get_confession_reaction(self, confession_id: int, user_id: int) -> str | None:
+        cursor = await self.conn.execute(
+            "SELECT emoji FROM confession_reactions WHERE confession_id = ? AND user_id = ?",
+            (confession_id, user_id),
+        )
+        row = await cursor.fetchone()
+        return row["emoji"] if row else None
+
+    async def get_confession_reaction_counts(self, confession_id: int) -> dict[str, int]:
+        cursor = await self.conn.execute(
+            "SELECT emoji, COUNT(*) AS c FROM confession_reactions WHERE confession_id = ? GROUP BY emoji",
+            (confession_id,),
+        )
+        rows = await cursor.fetchall()
+        return {row["emoji"]: row["c"] for row in rows}
 
     async def count_recent_confessions(self, group_id: int, user_id: int, since_ts: int) -> int:
         """Cuántas confesiones mandó esta persona a este grupo desde

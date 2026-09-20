@@ -27,6 +27,12 @@ Privacidad: el autor se guarda en la base SOLO para poder rastrear un
 abuso si hiciera falta y para el límite anti-spam. No se muestra en el
 grupo, ni en la tarjeta, ni en ningún comando.
 
+Reacciones: cada confesión publicada lleva tres botones (👍 😂 ❤️) además
+del de "hacer una confesión". Tocar uno registra la reacción de esa
+persona y actualiza el contador en el botón al toque; tocar el mismo de
+nuevo la saca; tocar otro la cambia. Es anónimo también: no se muestra
+quién reaccionó, solo el total de cada uno.
+
 Anti-abuso (lo mínimo, porque el anonimato invita a probar suerte):
  - Solo se aceptan confesiones para grupos donde la persona es miembro de
    verdad (se verifica contra Telegram en el momento).
@@ -50,6 +56,7 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from database import Database
+from utils.callbacks import safe_callback
 from utils.confession_image import MAX_CHARS, generate_announcement_image, generate_confession_image
 from utils.formatting import error, success
 from utils.permissions import check_executor_is_admin
@@ -63,6 +70,11 @@ _CONFESION_TEXT_PATTERN = re.compile(r"^/?confesi[oó]n(?:es)?$", re.IGNORECASE)
 
 _START_CONF_RE = re.compile(r"^conf_(-?\d+)$")
 
+# Las tres reacciones disponibles: código interno -> emoji mostrado. El
+# código es lo que viaja en el callback_data (más corto y estable que el
+# emoji en sí, por si algún día se cambia el emoji sin romper botones viejos).
+REACTION_EMOJIS = {"like": "👍", "haha": "😂", "love": "❤️"}
+
 # Límite de confesiones por persona, por grupo y por hora.
 # 0 = sin límite (es lo que pidió el owner). Si algún día hace falta
 # frenar un abuso, poner acá un número (por ejemplo 3) vuelve a activar
@@ -75,13 +87,35 @@ def _get_db(context: ContextTypes.DEFAULT_TYPE) -> Database:
     return context.application.bot_data["db"]
 
 
+def _confess_button_row(bot_username: str, group_id: int) -> list[InlineKeyboardButton]:
+    return [InlineKeyboardButton(
+        "✍️ Hacer una confesión",
+        url=f"https://t.me/{bot_username}?start=conf_{group_id}",
+    )]
+
+
 def _confess_button(bot_username: str, group_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton(
-            "✍️ Hacer una confesión",
-            url=f"https://t.me/{bot_username}?start=conf_{group_id}",
-        )
-    ]])
+    """Solo el botón de confesar (para el cartel de instrucciones, que no
+    tiene reacciones)."""
+    return InlineKeyboardMarkup([_confess_button_row(bot_username, group_id)])
+
+
+def _reaction_row(confession_id: int, counts: dict[str, int]) -> list[InlineKeyboardButton]:
+    row = []
+    for code, emoji in REACTION_EMOJIS.items():
+        count = counts.get(code, 0)
+        label = emoji if count == 0 else f"{emoji} {count}"
+        row.append(InlineKeyboardButton(label, callback_data=f"conf:react:{confession_id}:{code}"))
+    return row
+
+
+def _confession_keyboard(
+    confession_id: int, counts: dict[str, int], bot_username: str, group_id: int,
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        _reaction_row(confession_id, counts),
+        _confess_button_row(bot_username, group_id),
+    ])
 
 
 # --------------------------------------------------------------------- #
@@ -283,18 +317,16 @@ async def try_consume_confession_input(update: Update, context: ContextTypes.DEF
         )
         return True
 
-    numero = await db.add_confession(group_id, user.id, text)
+    confession_id, numero = await db.add_confession(group_id, user.id, text)
     image = await asyncio.to_thread(generate_confession_image, text, numero)
     buf = io.BytesIO()
     image.save(buf, format="PNG", optimize=True)
     buf.seek(0)
     buf.name = f"confesion_{numero}.png"
 
+    keyboard = _confession_keyboard(confession_id, {}, context.bot.username, group_id)
     try:
-        await context.bot.send_photo(
-            group_id, photo=buf,
-            reply_markup=_confess_button(context.bot.username, group_id),
-        )
+        await context.bot.send_photo(group_id, photo=buf, reply_markup=keyboard)
     except TelegramError as exc:
         context.user_data.pop(_PENDING_KEY, None)
         logger.warning("No pude publicar la confesión #%s en %s: %s", numero, group_id, exc)
@@ -308,3 +340,40 @@ async def try_consume_confession_input(update: Update, context: ContextTypes.DEF
         parse_mode="HTML",
     )
     return True
+
+
+# --------------------------------------------------------------------- #
+# Reacciones (👍 😂 ❤️) en las tarjetas publicadas
+# --------------------------------------------------------------------- #
+@safe_callback
+async def confession_reaction_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    db = _get_db(context)
+
+    _, _, confession_id_raw, code = query.data.split(":")
+    confession_id = int(confession_id_raw)
+    if code not in REACTION_EMOJIS:
+        await query.answer()
+        return
+
+    confession = await db.get_confession(confession_id)
+    if confession is None:
+        await query.answer("Esta confesión ya no existe.", show_alert=True)
+        return
+
+    user = query.from_user
+    current = await db.get_confession_reaction(confession_id, user.id)
+    if current == code:
+        await db.remove_confession_reaction(confession_id, user.id)
+        toast = "Reacción quitada."
+    else:
+        await db.set_confession_reaction(confession_id, user.id, code)
+        toast = f"¡Reaccionaste con {REACTION_EMOJIS[code]}!"
+
+    counts = await db.get_confession_reaction_counts(confession_id)
+    keyboard = _confession_keyboard(confession_id, counts, context.bot.username, confession["group_id"])
+    try:
+        await query.edit_message_reply_markup(reply_markup=keyboard)
+    except TelegramError:
+        pass  # el conteo puede no haber cambiado visualmente (Telegram no deja "editar" a lo mismo); no pasa nada
+    await query.answer(toast)

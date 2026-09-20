@@ -1,73 +1,50 @@
-Antiraid — protección contra expulsiones masivas (3 archivos)
-===============================================================
+/resumen + reacciones en confesiones — 4 archivos
+====================================================
 
-1. handlers/antiraid.py (NUEVO)
-2. database.py (MODIFICADO) — 2 tablas nuevas + métodos
-3. main.py (MODIFICADO) — registra el handler y los 2 comandos
+1. database.py (MODIFICADO)
+   - add_confession() ahora devuelve (id, numero) en vez de solo numero
+     (el id interno es lo que necesitan las reacciones).
+   - Nueva tabla confession_reactions + métodos: set/remove/get reacción
+     de una persona, y el conteo total por confesión.
 
-PRIMERO, LO TÉCNICO QUE IMPORTA
---------------------------------
-No existen usuarios con "poderes fuera de Telegram". Todo lo que se
-puede hacer en un grupo pasa por la misma API que usa este bot. Un
-"kick all" que saca a todos menos a los admins es exactamente lo que
-hace un script (userbot con Telethon/Pyrogram) corriendo en una cuenta
-QUE TENÍA PERMISO DE EXPULSAR en ese grupo. No es magia ni acceso
-especial: es admin + un bucle.
+2. handlers/confessions.py (MODIFICADO)
+   - Cada confesión publicada ahora lleva 3 botones de reacción (👍 😂 ❤️)
+     arriba del botón de "Hacer una confesión".
+   - Tocar uno la registra; tocar el mismo de nuevo la saca; tocar otro
+     la cambia. El conteo se actualiza al toque en el botón mismo.
+   - Sigue siendo anónimo: no se muestra QUIÉN reaccionó, solo el total.
 
-Y el personal de Telegram no hace eso: ellos actúan a nivel de cuentas o
-del grupo entero (lo suspenden), no entran a vaciarte la sala miembro
-por miembro.
+3. handlers/gemini_chat.py (MODIFICADO)
+   - Nuevo comando /resumen (y /resumen <número>, ej. /resumen 300).
+   - Usa el mismo historial en memoria que ya existía para /q (últimos
+     hasta 400 mensajes por grupo, en utils/message_log.py — no hizo
+     falta tocar ese archivo) y el mismo motor de IA que ya usa "ceo"
+     (Gemini con respaldo automático a Groq).
+   - Mismos requisitos que "ceo": necesita GEMINI_API_KEY o
+     GROQ_API_KEY configurada, y el grupo tiene que estar activado con
+     /activar.
+   - Si el bot se reinició hace poco y todavía no hay mensajes
+     registrados en memoria, avisa en vez de fallar.
 
-Esto importa porque cambia cuál es la defensa real: el agujero es QUIÉN
-TIENE PERMISO DE EXPULSAR, no un poder oculto. Revisá la lista de
-administradores de tus grupos y sacá "Banear usuarios" a todo el que no
-lo necesite de verdad — eso solo ya cierra el 90% del problema. Ojo
-también con bots de terceros que hayas puesto como admin: si el bot es
-malicioso o le robaron el token, puede hacer lo mismo.
+4. main.py (MODIFICADO)
+   - Registra /resumen y el callback de reacciones de confesiones.
 
-QUÉ HACE ESTE SISTEMA
-----------------------
-Telegram avisa de cada cambio de miembro e incluye QUIÉN lo provocó. El
-bot ahora escucha eso y lleva la cuenta por autor:
+PROBADO A MANO (sin poder probar contra Telegram real, obviamente):
+   - Ciclo completo de reacciones: agregar, cambiar, quitar, conteo
+     agrupado — todo con asserts, pasó todo.
+   - Armado del teclado: el emoji se ve solo cuando el conteo es 0, con
+     número al lado cuando hay reacciones.
+   - Armado de la transcripción para /resumen con una conversación
+     simulada: junta los mensajes anteriores correctamente y el propio
+     /resumen no se incluye a sí mismo.
+   - main.py entero importa sin errores con todos los cambios juntos.
 
- - Si alguien saca a 5 o más miembros en 30 segundos (configurable):
-   1. Intenta DEGRADARLO al instante (quitarle todos los permisos), que
-      es lo único que corta el ataque de verdad.
-   2. Avisa en el grupo y por privado a los propietarios, con nombre e ID.
-   3. Guarda la lista de TODOS los expulsados para reinvitarlos.
-
- - No se dispara con moderación normal (2-3 bans sueltos), ni con los
-   bans que hace el propio bot (/ban, warns, fban), ni con gente que se
-   va por su cuenta.
-
-LÍMITE REAL, Y ES IMPORTANTE QUE LO SEPAS
-------------------------------------------
-Telegram solo permite que un bot degrade a administradores que ESE MISMO
-BOT promovió. Si al atacante lo promovió una persona, o es el creador del
-grupo, el bot NO puede degradarlo por más permisos que tenga — es una
-regla de Telegram, no una limitación que yo pueda sortear.
-
-En ese caso el bot igual avisa en el acto y registra todo, y el mensaje
-de alerta te dice explícitamente que hay que sacarlo a mano y cómo. Por
-eso la prevención (quién tiene permiso de banear) sigue siendo lo más
-importante; esto es la red de contención, no un reemplazo.
-
-Consecuencia práctica útil: si promovés a tus admins CON EL BOT
-(/admin), el bot después sí puede degradarlos solo en caso de ataque.
-
-COMANDOS
---------
-/antiraid           — ver estado y configuración
-/antiraid on|off    — activar/desactivar
-/antiraid <número>  — cambiar el umbral (entre 2 y 50)
-/recuperar [horas]  — quiénes fueron expulsados y por quién (24h por
-                      defecto), agrupado por responsable, con los IDs
-                      para poder reinvitarlos
-
-Viene ACTIVADO por defecto en todos los grupos, sin necesidad de
-configurarlo: una protección que hay que acordarse de encender no sirve
-justo el día del ataque.
+Ojo con una limitación que ya venía de antes (no la introduje yo): el
+historial de mensajes para /resumen vive en MEMORIA, no en la base de
+datos — se pierde si el bot se reinicia. Es la misma limitación que ya
+tenía /q, así que /resumen hereda el mismo comportamiento (no es nuevo,
+es consistente con lo que ya existía).
 
 IMPORTANTE: este zip NO incluye ningún archivo de base de datos
 (bot.db). Nunca reemplaces database/bot.db con nada de un zip mío.
-Las 2 tablas nuevas se crean solas al arrancar.
+La tabla nueva se crea sola al arrancar.

@@ -66,7 +66,7 @@ from handlers.cleanup import (
 )
 from handlers.filters_words import check_banned_words, try_consume_pending_words, words_menu_callback
 from handlers.free import free_command, freelist_command, unfree_command
-from handlers.gemini_chat import ceo_trigger
+from handlers.gemini_chat import ceo_trigger, resumen_command
 from handlers.kang import kang_command
 from handlers.horoscopo import horoscopo_command, try_consume_pending_birthdate
 from handlers.menu import menu_callback, menu_command, try_consume_pending_input
@@ -137,7 +137,8 @@ from handlers.economy import (
 from handlers.antiraid import antiraid_command, on_member_removed, recuperar_command
 from handlers.confessions import (
     cancelar_confesion_command, confesion_command, confesion_text_trigger,
-    handle_confession_start_deeplink, parar_command, try_consume_confession_input,
+    confession_reaction_callback, handle_confession_start_deeplink, parar_command,
+    try_consume_confession_input,
 )
 from handlers.federations import (
     cancelarfed_command, fban_command, fbanstat_command, fchat_command,
@@ -216,6 +217,7 @@ BOT_COMMANDS = [
     BotCommand("parar", "Cortar las confesiones anónimas del grupo"),
     BotCommand("antiraid", "Protección contra expulsiones masivas"),
     BotCommand("recuperar", "Ver quiénes fueron expulsados y por quién"),
+    BotCommand("resumen", "Resumir lo último que se habló en el grupo"),
     BotCommand("top", "Ver el top 10 de más mensajes del grupo"),
 ]
 
@@ -703,8 +705,10 @@ def build_application() -> Application:
     # --- Antiraid (handlers/antiraid.py) ---
     application.add_handler(CommandHandler("antiraid", antiraid_command))
     application.add_handler(CommandHandler("recuperar", recuperar_command))
+    application.add_handler(CommandHandler("resumen", resumen_command))
     application.add_handler(CommandHandler("cancelar", cancelar_confesion_command))
     application.add_handler(CallbackQueryHandler(fedpromote_callback, pattern=r"^fedp:"))
+    application.add_handler(CallbackQueryHandler(confession_reaction_callback, pattern=r"^conf:react:"))
     application.add_handler(CallbackQueryHandler(ranking_callback, pattern=r"^ranking_(today|week|all)$"))
 
     # Router de mensajes libres (texto o media): editor de recurrentes,
