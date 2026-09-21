@@ -1,50 +1,46 @@
-/resumen + reacciones en confesiones — 4 archivos
-====================================================
+Arreglo /resumen — 2 archivos
+================================
 
-1. database.py (MODIFICADO)
-   - add_confession() ahora devuelve (id, numero) en vez de solo numero
-     (el id interno es lo que necesitan las reacciones).
-   - Nueva tabla confession_reactions + métodos: set/remove/get reacción
-     de una persona, y el conteo total por confesión.
+CAUSA (confirmada con el log que mandaste):
 
-2. handlers/confessions.py (MODIFICADO)
-   - Cada confesión publicada ahora lleva 3 botones de reacción (👍 😂 ❤️)
-     arriba del botón de "Hacer una confesión".
-   - Tocar uno la registra; tocar el mismo de nuevo la saca; tocar otro
-     la cambia. El conteo se actualiza al toque en el botón mismo.
-   - Sigue siendo anónimo: no se muestra QUIÉN reaccionó, solo el total.
+1) Gemini bloqueó el resumen por su propio filtro de contenido
+   (blockReason: PROHIBITED_CONTENT) — probablemente algo puntual en
+   los mensajes recientes del grupo lo disparó. Esto es una decisión de
+   Gemini, no un bug del bot; no se puede "arreglar" del lado del
+   código, pero sí mejoré el aviso (ver abajo).
 
-3. handlers/gemini_chat.py (MODIFICADO)
-   - Nuevo comando /resumen (y /resumen <número>, ej. /resumen 300).
-   - Usa el mismo historial en memoria que ya existía para /q (últimos
-     hasta 400 mensajes por grupo, en utils/message_log.py — no hizo
-     falta tocar ese archivo) y el mismo motor de IA que ya usa "ceo"
-     (Gemini con respaldo automático a Groq).
-   - Mismos requisitos que "ceo": necesita GEMINI_API_KEY o
-     GROQ_API_KEY configurada, y el grupo tiene que estar activado con
-     /activar.
-   - Si el bot se reinició hace poco y todavía no hay mensajes
-     registrados en memoria, avisa en vez de fallar.
+2) El respaldo con Groq TAMBIÉN falló, y este sí era un bug real: el
+   modelo que el bot tenía configurado por defecto
+   (llama-3.3-70b-versatile) fue dado de baja por Groq el 16 de agosto
+   de 2026. Por eso daba 404 Not Found — no era tu API key ni tu
+   cuenta, era el nombre del modelo, que ya no existe más del lado de
+   Groq.
 
-4. main.py (MODIFICADO)
-   - Registra /resumen y el callback de reacciones de confesiones.
+QUÉ CAMBIÉ:
 
-PROBADO A MANO (sin poder probar contra Telegram real, obviamente):
-   - Ciclo completo de reacciones: agregar, cambiar, quitar, conteo
-     agrupado — todo con asserts, pasó todo.
-   - Armado del teclado: el emoji se ve solo cuando el conteo es 0, con
-     número al lado cuando hay reacciones.
-   - Armado de la transcripción para /resumen con una conversación
-     simulada: junta los mensajes anteriores correctamente y el propio
-     /resumen no se incluye a sí mismo.
-   - main.py entero importa sin errores con todos los cambios juntos.
+1. config.py (MODIFICADO)
+   - Modelo de Groq actualizado de "llama-3.3-70b-versatile" a
+     "openai/gpt-oss-120b" (el reemplazo que recomienda Groq).
+   - Si en tu .env tenés GROQ_MODEL puesto a mano con el nombre viejo,
+     sacalo o cambialo también ahí — el .env tiene prioridad sobre este
+     valor por defecto.
 
-Ojo con una limitación que ya venía de antes (no la introduje yo): el
-historial de mensajes para /resumen vive en MEMORIA, no en la base de
-datos — se pierde si el bot se reinicia. Es la misma limitación que ya
-tenía /q, así que /resumen hereda el mismo comportamiento (no es nuevo,
-es consistente con lo que ya existía).
+2. handlers/gemini_chat.py (MODIFICADO)
+   - Cuando Gemini bloquea el pedido por contenido, ahora se detecta
+     específicamente (antes se perdía en un error genérico) y, si
+     encima falla el respaldo de Groq, /resumen te avisa con el motivo
+     real en vez de un "probá más tarde" sin explicación:
+     "😅 Gemini bloqueó el resumen por su filtro de contenido (motivo:
+     PROHIBITED_CONTENT)... probá con menos mensajes (/resumen 50) o
+     más tarde."
+   - Con el modelo de Groq ya arreglado, en la práctica esto debería
+     dejar de pasar casi siempre: cuando Gemini bloquee, Groq va a
+     poder responder igual (Groq suele ser más permisivo con ese tipo
+     de contenido).
+
+Probado sin depender de la red: reproduje el escenario exacto de tu log
+(Gemini bloquea -> Groq también falla) y confirmé que el mensaje nuevo
+identifica bien el motivo real.
 
 IMPORTANTE: este zip NO incluye ningún archivo de base de datos
 (bot.db). Nunca reemplaces database/bot.db con nada de un zip mío.
-La tabla nueva se crea sola al arrancar.

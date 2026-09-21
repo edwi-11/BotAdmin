@@ -112,7 +112,9 @@ def _push_history(chat_id: int, user_id: int, question: str, answer: str) -> Non
 
 
 class GeminiError(Exception):
-    pass
+    def __init__(self, message: str, *, block_reason: str | None = None) -> None:
+        super().__init__(message)
+        self.block_reason = block_reason
 
 
 # --------------------------------------------------------------------- #
@@ -146,8 +148,14 @@ async def _ask_gemini(prompt: str, history: list[dict[str, str]] | None = None) 
         return text
     except (KeyError, IndexError, TypeError) as exc:
         finish_reason = data.get("candidates", [{}])[0].get("finishReason") if data.get("candidates") else None
-        logger.warning("Respuesta inesperada de Gemini (finishReason=%s): %s", finish_reason, data)
-        raise GeminiError("Respuesta vacía o bloqueada por Gemini") from exc
+        # Gemini puede bloquear directamente el PEDIDO (ni siquiera llega a
+        # generar candidatos) por su filtro de contenido — ahí no hay
+        # "candidates" en absoluto, sino promptFeedback.blockReason. Lo
+        # distinguimos para poder avisar más claro en vez de un genérico
+        # "no pude responder".
+        block_reason = data.get("promptFeedback", {}).get("blockReason")
+        logger.warning("Respuesta inesperada de Gemini (finishReason=%s, blockReason=%s): %s", finish_reason, block_reason, data)
+        raise GeminiError("Respuesta vacía o bloqueada por Gemini", block_reason=block_reason) from exc
 
 
 async def _ask_groq(prompt: str, history: list[dict[str, str]] | None = None) -> str:
@@ -416,7 +424,15 @@ async def resumen_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         resumen = await _ask_ai(prompt)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Error generando /resumen: %s", exc)
-        await message.reply_text("😅 No pude armar el resumen ahora mismo, probá de nuevo en un ratito.")
+        block_reason = getattr(exc, "block_reason", None) or getattr(exc.__cause__, "block_reason", None)
+        if block_reason:
+            await message.reply_text(
+                "😅 Gemini bloqueó el resumen por su filtro de contenido "
+                f"(motivo: {block_reason}) — probablemente algo en los mensajes recientes lo disparó. "
+                "No es un error del bot; probá con menos mensajes (/resumen 50) o más tarde."
+            )
+        else:
+            await message.reply_text("😅 No pude armar el resumen ahora mismo, probá de nuevo en un ratito.")
         return
 
     await message.reply_text(f"📋 Resumen de los últimos {len(stubs)} mensajes:\n\n{resumen}")
