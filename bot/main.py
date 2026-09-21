@@ -68,6 +68,7 @@ from handlers.filters_words import check_banned_words, try_consume_pending_words
 from handlers.free import free_command, freelist_command, unfree_command
 from handlers.gemini_chat import ceo_trigger, resumen_command
 from handlers.kang import kang_command
+from handlers.wa_stickers import wasticker_command
 from handlers.horoscopo import horoscopo_command, try_consume_pending_birthdate
 from handlers.menu import menu_callback, menu_command, try_consume_pending_input
 from utils.message_log import track_message
@@ -615,6 +616,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("grupos", grupos_command))
     application.add_handler(CommandHandler("salirgrupo", salirgrupo_command))
     application.add_handler(CommandHandler(["kang", "steal"], kang_command))
+    application.add_handler(CommandHandler(["wasticker", "towa"], wasticker_command))
     application.add_handler(CommandHandler("owner", owner_command))
     application.add_handler(CommandHandler("ready", ready_command))
     application.add_handler(CallbackQueryHandler(owner_select_callback, pattern=r"^remote:"))
