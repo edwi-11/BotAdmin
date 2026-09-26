@@ -151,10 +151,8 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if chat.type in ("group", "supergroup"):
         entry = await db.get_activity_entry(chat.id, target_id)
         total_messages = entry.total_messages if entry else 0
-        streak_days = await db.get_activity_streak(chat.id, target_id)
         lines.append(f"🎖 Insignia: {escape_md(get_activity_title(total_messages))}")
         lines.append(f"💬 Mensajes en el grupo: {total_messages}")
-        lines.append(f"🔥 Racha de actividad: {streak_days} día\\(s\\)")
 
     await message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN_V2)
 

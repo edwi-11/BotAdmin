@@ -1680,44 +1680,6 @@ class Database:
         await self.conn.commit()
         return cursor.rowcount
 
-    # ------------------------------------------------------------------ #
-    # Racha de actividad (días seguidos escribiendo), ver
-    # utils/activity_stats.py -> track_activity.
-    # ------------------------------------------------------------------ #
-    async def bump_activity_streak(
-        self, chat_id: int, user_id: int, today: str, yesterday: str
-    ) -> Optional[int]:
-        """Si hoy es la primera vez que este usuario escribe en este grupo,
-        actualiza su racha de días activos y devuelve el nuevo valor.
-        Devuelve None si hoy ya se le había contado (para no premiarlo dos
-        veces el mismo día). Asume que `record_message_activity` ya
-        insertó la fila antes de llamar a esto."""
-        cursor = await self.conn.execute(
-            "SELECT streak_days, streak_last_day FROM activity_stats WHERE chat_id = ? AND user_id = ?",
-            (chat_id, user_id),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        if row["streak_last_day"] == today:
-            return None  # ya se le contó hoy
-
-        new_streak = row["streak_days"] + 1 if row["streak_last_day"] == yesterday else 1
-        await self.conn.execute(
-            "UPDATE activity_stats SET streak_days = ?, streak_last_day = ? WHERE chat_id = ? AND user_id = ?",
-            (new_streak, today, chat_id, user_id),
-        )
-        await self.conn.commit()
-        return new_streak
-
-    async def get_activity_streak(self, chat_id: int, user_id: int) -> int:
-        cursor = await self.conn.execute(
-            "SELECT streak_days FROM activity_stats WHERE chat_id = ? AND user_id = ?",
-            (chat_id, user_id),
-        )
-        row = await cursor.fetchone()
-        return int(row["streak_days"]) if row else 0
-
     async def get_activity_week_total(self, chat_id: int) -> int:
         cursor = await self.conn.execute(
             "SELECT COALESCE(SUM(week_messages), 0) AS total FROM activity_stats WHERE chat_id = ?",

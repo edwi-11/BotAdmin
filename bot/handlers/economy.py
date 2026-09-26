@@ -1,16 +1,14 @@
 """
 handlers/economy.py
-Sistema completo de economía del grupo: monedas, juegos diarios con dados
-animados de Telegram, empleos, robos, banco, tienda y ranking.
+Sistema completo de economía del grupo: monedas, empleos, robos, banco,
+tienda y ranking.
 
 Todo el saldo es POR GRUPO (igual que warnings/freed_users): las monedas de
 un usuario en un grupo no se comparten con otro grupo.
 
 Comandos:
     /saldo (alias /perfil, /economia)   — ver perfil económico
-    /diario                              — bono diario con racha
-    /baloncesto /futbol /dardos /bolos /tragamonedas
-                                          — 1 tirada gratis al día c/u
+    /diario                              — bono diario
     /trabajos                            — ver empleos disponibles
     /trabajo <clave>                     — elegir empleo
     /renunciar                           — dejar el empleo actual
@@ -30,7 +28,7 @@ import random
 import time
 
 from telegram import Update
-from telegram.constants import DiceEmoji, ParseMode
+from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from database import Database, EconomyProfile
@@ -49,140 +47,10 @@ def _now() -> int:
 
 
 # --------------------------------------------------------------------- #
-# Configuración de juegos con dados animados
-# --------------------------------------------------------------------- #
-# Cada juego define: emoji de Telegram, cooldown (1 vez al día = 86400s),
-# y una función que traduce el valor del dado (aleatorio, lo decide
-# Telegram del lado del servidor) en una recompensa de monedas + XP.
-GAME_COOLDOWN = 86400  # 24h
-
-
-def _basketball_reward(value: int) -> tuple[int, int, str]:
-    if value in (4, 5):
-        coins = random.randint(80, 150)
-        return coins, coins // 8, "¡Encestaste! 🏀🔥"
-    return 0, 2, "Tiraste y no entró. Más suerte mañana."
-
-
-def _football_reward(value: int) -> tuple[int, int, str]:
-    if value in (4, 5):
-        coins = random.randint(80, 150)
-        return coins, coins // 8, "¡GOOOL! ⚽🥅"
-    return 0, 2, "El balón se fue desviado."
-
-
-def _darts_reward(value: int) -> tuple[int, int, str]:
-    if value == 6:
-        coins = random.randint(150, 250)
-        return coins, coins // 6, "¡Diana perfecta! 🎯💥"
-    if value in (4, 5):
-        coins = random.randint(60, 120)
-        return coins, coins // 6, "Buen tiro, cerca del centro."
-    return 0, 2, "El dardo casi ni tocó el tablero."
-
-
-def _bowling_reward(value: int) -> tuple[int, int, str]:
-    if value == 6:
-        coins = random.randint(150, 250)
-        return coins, coins // 6, "¡STRIKE! 🎳🎉"
-    if value in (4, 5):
-        coins = random.randint(50, 100)
-        return coins, coins // 6, "Tumbaste varios pinos."
-    return 0, 2, "Casi todos los pinos siguen de pie."
-
-
-_SLOT_JACKPOT_VALUES = {1, 22, 43, 64}  # tres símbolos iguales
-
-
-def _slot_reward(value: int) -> tuple[int, int, str]:
-    if value in _SLOT_JACKPOT_VALUES:
-        coins = random.randint(300, 500)
-        return coins, coins // 5, "¡JACKPOT! Tres símbolos iguales 🎰🤑"
-    return 0, 2, "No hubo combinación ganadora esta vez."
-
-
-GAMES: dict[str, dict] = {
-    "basket": {
-        "command": "baloncesto", "label": "🏀 Baloncesto", "emoji": DiceEmoji.BASKETBALL,
-        "reward_fn": _basketball_reward,
-    },
-    "futbol": {
-        "command": "futbol", "label": "⚽ Fútbol", "emoji": DiceEmoji.FOOTBALL,
-        "reward_fn": _football_reward,
-    },
-    "dardos": {
-        "command": "dardos", "label": "🎯 Dardos", "emoji": DiceEmoji.DARTS,
-        "reward_fn": _darts_reward,
-    },
-    "bolos": {
-        "command": "bolos", "label": "🎳 Bolos", "emoji": DiceEmoji.BOWLING,
-        "reward_fn": _bowling_reward,
-    },
-    "slot": {
-        "command": "tragamonedas", "label": "🎰 Tragamonedas", "emoji": DiceEmoji.SLOT_MACHINE,
-        "reward_fn": _slot_reward,
-    },
-}
-
-
-def _make_game_handler(key: str):
-    game = GAMES[key]
-
-    async def _handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        chat = update.effective_chat
-        user = update.effective_user
-        message = update.effective_message
-        if chat.type not in ("group", "supergroup"):
-            await message.reply_text(error("Este comando solo funciona en grupos."))
-            return
-
-        db = _get_db(context)
-        action = f"game:{key}"
-        last_ts = await db.get_cooldown(chat.id, user.id, action)
-        remaining = GAME_COOLDOWN - (_now() - last_ts)
-        if remaining > 0:
-            await message.reply_text(
-                warning(
-                    f"Ya jugaste a {game['label']} hoy. Podrás volver a intentarlo en "
-                    f"*{humanize_seconds(remaining)}*."
-                ),
-                parse_mode=ParseMode.MARKDOWN_V2,
-            )
-            return
-
-        dice_msg = await context.bot.send_dice(chat_id=chat.id, emoji=game["emoji"])
-        value = dice_msg.dice.value
-
-        coins, xp, phrase = game["reward_fn"](value)
-        await db.set_cooldown(chat.id, user.id, action)
-        if coins > 0:
-            await db.add_balance(chat.id, user.id, coins)
-        if xp > 0:
-            await db.add_xp(chat.id, user.id, xp)
-
-        if coins > 0:
-            text = f"{phrase}\n💰 Ganaste *{coins}* monedas \\(\\+{xp} XP\\)\\."
-        else:
-            text = f"{phrase}\n💰 No ganaste monedas esta vez \\(\\+{xp} XP por participar\\)\\."
-        await message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
-
-    return _handler
-
-
-baloncesto_command = _make_game_handler("basket")
-futbol_command = _make_game_handler("futbol")
-dardos_command = _make_game_handler("dardos")
-bolos_command = _make_game_handler("bolos")
-tragamonedas_command = _make_game_handler("slot")
-
-
-# --------------------------------------------------------------------- #
-# /diario — bono diario con racha
+# /diario — bono diario
 # --------------------------------------------------------------------- #
 DAILY_BASE = 100
-DAILY_STREAK_BONUS = 20   # por cada día consecutivo, hasta el tope
-DAILY_STREAK_CAP = 10
-DAILY_RESET_GRACE = 172800  # si pasan más de 48h sin reclamar, se rompe la racha
+DAILY_COOLDOWN = 86400  # 24h entre reclamos
 
 
 async def diario_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -197,24 +65,20 @@ async def diario_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     profile = await db.get_economy(chat.id, user.id)
     elapsed = _now() - profile.last_daily
 
-    if elapsed < GAME_COOLDOWN:
+    if elapsed < DAILY_COOLDOWN:
         await message.reply_text(
-            warning(f"Ya reclamaste tu bono diario hoy. Vuelve en *{humanize_seconds(GAME_COOLDOWN - elapsed)}*."),
+            warning(f"Ya reclamaste tu bono diario hoy. Vuelve en *{humanize_seconds(DAILY_COOLDOWN - elapsed)}*."),
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         return
 
-    new_streak = profile.daily_streak + 1 if elapsed < DAILY_RESET_GRACE else 1
-    new_streak = min(new_streak, DAILY_STREAK_CAP)
-    bonus = DAILY_BASE + DAILY_STREAK_BONUS * (new_streak - 1)
-
-    await db.add_balance(chat.id, user.id, bonus)
+    await db.add_balance(chat.id, user.id, DAILY_BASE)
     await db.add_xp(chat.id, user.id, 15)
-    await db.set_daily(chat.id, user.id, new_streak, _now())
+    await db.set_daily(chat.id, user.id, 0, _now())
 
     text = (
         f"🎁 *Bono diario reclamado*\n"
-        f"💰 \\+{bonus} monedas \\(racha: {new_streak} día\\(s\\)\\)\n"
+        f"💰 \\+{DAILY_BASE} monedas\n"
         f"✨ \\+15 XP"
     )
     await message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
