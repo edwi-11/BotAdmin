@@ -358,6 +358,15 @@ CREATE TABLE IF NOT EXISTS fed_groups (
 );
 CREATE INDEX IF NOT EXISTS idx_fed_groups_fed ON fed_groups (fed_id);
 
+-- Grupos que apagaron el sistema de fed a propósito con /nofed. Mientras
+-- un grupo esté acá, /fban ejecutado adentro no hace nada y no contesta
+-- nada (ni "no pertenece a ninguna federación" ni ningún otro mensaje).
+-- /joinfed lo saca de esta lista y vuelve todo a la normalidad.
+CREATE TABLE IF NOT EXISTS fed_disabled_groups (
+    group_id     INTEGER PRIMARY KEY,
+    disabled_at  INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS fed_bans (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     fed_id      TEXT NOT NULL,
@@ -1970,10 +1979,41 @@ class Database:
         )
         await self.conn.commit()
 
+    async def leave_group_fed(self, group_id: int) -> bool:
+        """Saca a este grupo de la federación a la que pertenezca (si alguna).
+        Devuelve True si el grupo pertenecía a una y se lo quitó."""
+        cursor = await self.conn.execute(
+            "DELETE FROM fed_groups WHERE group_id = ?", (group_id,)
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
     async def get_group_fed(self, group_id: int) -> Optional[str]:
         cursor = await self.conn.execute("SELECT fed_id FROM fed_groups WHERE group_id = ?", (group_id,))
         row = await cursor.fetchone()
         return row["fed_id"] if row else None
+
+    async def set_fed_disabled(self, group_id: int) -> None:
+        """Marca este grupo como apagado para el sistema de fed (/nofed)."""
+        await self.conn.execute(
+            "INSERT INTO fed_disabled_groups (group_id, disabled_at) VALUES (?, ?) "
+            "ON CONFLICT(group_id) DO NOTHING",
+            (group_id, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def clear_fed_disabled(self, group_id: int) -> None:
+        """Saca a este grupo de la lista de apagados (/joinfed vuelve todo a la normalidad)."""
+        await self.conn.execute(
+            "DELETE FROM fed_disabled_groups WHERE group_id = ?", (group_id,)
+        )
+        await self.conn.commit()
+
+    async def is_fed_disabled(self, group_id: int) -> bool:
+        cursor = await self.conn.execute(
+            "SELECT 1 FROM fed_disabled_groups WHERE group_id = ?", (group_id,)
+        )
+        return await cursor.fetchone() is not None
 
     async def get_fed_groups(self, fed_id: str) -> list[int]:
         cursor = await self.conn.execute("SELECT group_id FROM fed_groups WHERE fed_id = ?", (fed_id,))

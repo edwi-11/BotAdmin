@@ -12,6 +12,7 @@ from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
+import config
 from config import settings
 from database import Database
 from utils.action_stickers import send_action_sticker
@@ -151,6 +152,7 @@ async def _kick_impl(update: Update, context: ContextTypes.DEFAULT_TYPE, delete_
         f"📝 Motivo: {escape_md(reason)}"
     )
     await _reply(update, text)
+    await send_action_sticker(context.bot, chat.id, settings.sticker_completado)
 
 
 async def kick_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -263,6 +265,7 @@ async def unmute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"🛡 Administrador: {mention(executor.id, executor.first_name)}"
     )
     await _reply(update, text)
+    await send_action_sticker(context.bot, chat.id, settings.sticker_completado)
 
 
 async def _warn_impl(update: Update, context: ContextTypes.DEFAULT_TYPE, delete_replied: bool) -> None:
@@ -393,6 +396,9 @@ async def unwarn_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"🔢 Advertencias: *{count}/{settings.warn_limit}*"
     )
     await _reply(update, text)
+    # Ojo: acá arriba "settings" es la variable local de db.get_group_settings,
+    # no el config global — para el sticker genérico hay que ir por el módulo.
+    await send_action_sticker(context.bot, chat.id, config.settings.sticker_completado)
 
 
 async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -432,3 +438,4 @@ async def unban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"🛡 Administrador: {mention(executor.id, executor.first_name)}"
     )
     await _reply(update, text)
+    await send_action_sticker(context.bot, chat.id, settings.sticker_completado)

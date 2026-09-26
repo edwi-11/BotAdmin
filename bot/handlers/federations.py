@@ -55,11 +55,18 @@ from telegram.constants import ChatType
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
+from config import settings
 from database import Database
+from utils.action_stickers import send_action_sticker
 from utils.callbacks import safe_callback
 from utils.formatting import error, success
 from utils.parsing import resolve_target
-from utils.permissions import check_bot_rights, check_executor_is_admin, is_owner
+from utils.permissions import (
+    check_bot_rights,
+    check_executor_is_admin,
+    check_group_owner_or_cofounder,
+    is_owner,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +180,9 @@ async def joinfed_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     await db.join_group_to_fed(chat.id, fed_id)
+    # /joinfed "normal" siempre vuelve todo a la normalidad, incluso si
+    # este grupo había apagado el sistema de fed con /nofed antes.
+    await db.clear_fed_disabled(chat.id)
 
     # Sincronizamos al revés: aplicamos ya mismo todos los baneos que ya
     # tenía la federación, para que este grupo quede al día de una.
@@ -190,6 +200,7 @@ async def joinfed_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         success(f"Este grupo ahora forma parte de la federación <b>{html.escape(fed['name'])}</b>.") + extra,
         parse_mode="HTML",
     )
+    await send_action_sticker(context.bot, chat.id, settings.sticker_completado)
 
     if fed["fchat_id"] and fed["fchat_id"] != chat.id:
         try:
@@ -197,6 +208,72 @@ async def joinfed_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 fed["fchat_id"],
                 f"🔗 El grupo <b>{html.escape(chat.title or str(chat.id))}</b> se unió a la federación "
                 f"<b>{html.escape(fed['name'])}</b>.",
+                parse_mode="HTML",
+            )
+        except TelegramError:
+            pass
+
+
+# --------------------------------------------------------------------- #
+# /nofed — APAGA por completo el sistema de fed en ESTE grupo: lo saca de
+# su federación actual (si tiene una) y además lo marca como "apagado" en
+# fed_disabled_groups. Mientras esté marcado, /fban usado adentro de este
+# grupo no hace absolutamente nada y no contesta nada (ni "no pertenece a
+# ninguna federación" ni ningún otro mensaje) — antes de esto, /nofed solo
+# desvinculaba al grupo, pero /fban seguía respondiendo con esos mensajes.
+# /joinfed IDFed (uso normal) es lo único que saca al grupo de esta lista
+# y devuelve el comportamiento a la normalidad.
+# Lo puede usar el dueño real del grupo (creator de Telegram) o un
+# cofundador (admin con todos los permisos clave) — a propósito, sin
+# necesidad de ser admin de la federación.
+# --------------------------------------------------------------------- #
+async def nofed_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat = update.effective_chat
+    user = update.effective_user
+    message = update.effective_message
+    db = _get_db(context)
+
+    if chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+        await message.reply_text(error("Este comando solo funciona dentro de un grupo."))
+        return
+
+    perm = await check_group_owner_or_cofounder(context.bot, chat.id, user.id)
+    if not perm.allowed:
+        await message.reply_text(error(perm.reason))
+        return
+
+    fed_id = await db.get_group_fed(chat.id)
+    fed = await db.get_fed(fed_id) if fed_id else None
+
+    if fed_id is not None:
+        await db.leave_group_fed(chat.id)
+
+    already_off = await db.is_fed_disabled(chat.id)
+    await db.set_fed_disabled(chat.id)
+
+    if fed:
+        fed_name = html.escape(fed["name"])
+        text = (
+            f"Este grupo salió de la federación <b>{fed_name}</b> y el sistema de fed quedó "
+            "apagado acá: /fban ya no va a hacer ni decir nada en este chat hasta que uses "
+            "/joinfed de nuevo."
+        )
+    elif already_off:
+        text = "El sistema de fed ya estaba apagado en este chat."
+    else:
+        text = (
+            "Sistema de fed apagado en este chat: /fban ya no va a hacer ni decir nada acá "
+            "hasta que uses /joinfed de nuevo."
+        )
+    await message.reply_text(success(text), parse_mode="HTML")
+    await send_action_sticker(context.bot, chat.id, settings.sticker_completado)
+
+    if fed and fed["fchat_id"] and fed["fchat_id"] != chat.id:
+        try:
+            await context.bot.send_message(
+                fed["fchat_id"],
+                f"🚪 El grupo <b>{html.escape(chat.title or str(chat.id))}</b> salió de la federación "
+                f"<b>{html.escape(fed['name'])}</b> (usando /nofed).",
                 parse_mode="HTML",
             )
         except TelegramError:
@@ -228,6 +305,7 @@ async def fchat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         success(f"Este chat ahora es el FChat de la federación <b>{html.escape(fed['name'])}</b>."),
         parse_mode="HTML",
     )
+    await send_action_sticker(context.bot, chat.id, settings.sticker_completado)
 
 
 # --------------------------------------------------------------------- #
@@ -251,6 +329,10 @@ async def fban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     else:
         fed_id = await db.get_group_fed(chat.id)
         if fed_id is None:
+            if await db.is_fed_disabled(chat.id):
+                # El grupo apagó el sistema de fed con /nofed: no hacemos
+                # ni decimos nada hasta que se use /joinfed de nuevo.
+                return
             await message.reply_text(error("Este grupo no pertenece a ninguna federación. Usá /joinfed IDFed primero."))
             return
 
@@ -321,6 +403,7 @@ async def fban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     # Lugar 1: donde se ejecutó el comando.
     await message.reply_text(text + extra, parse_mode="HTML")
+    await send_action_sticker(context.bot, chat.id, settings.sticker_completado)
 
     # Lugar 2: el FChat, si está configurado y no es el mismo chat de arriba.
     if fed["fchat_id"] and fed["fchat_id"] != chat.id:

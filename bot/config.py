@@ -54,6 +54,7 @@ class Settings:
     sticker_brb: str = ""       # Al activarse el estado BRB/AFK
     sticker_brb_back: str = ""  # Al volver de BRB/AFK
     sticker_del: str = ""
+    sticker_completado: str = ""  # Genérico: se manda al terminar OK una acción sin sticker propio
 
     def validate(self) -> None:
         if not self.bot_token or ":" not in self.bot_token:
@@ -92,6 +93,7 @@ def load_settings() -> Settings:
         sticker_brb=os.getenv("STICKER_BRB", "").strip(),
         sticker_brb_back=os.getenv("STICKER_BRB_BACK", "").strip(),
         sticker_del=os.getenv("STICKER_DEL", "").strip(),
+        sticker_completado=os.getenv("STICKER_COMPLETADO", "").strip(),
     )
     settings.validate()
     return settings
