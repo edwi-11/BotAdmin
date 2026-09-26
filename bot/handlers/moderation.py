@@ -12,7 +12,9 @@ from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
+from config import settings
 from database import Database
+from utils.action_stickers import send_action_sticker
 from utils.formatting import error, escape_md, humanize_seconds, mention, success
 from utils.parsing import resolve_target
 from utils.permissions import can_moderate, check_bot_rights, check_executor_is_admin
@@ -92,6 +94,7 @@ async def _ban_impl(update: Update, context: ContextTypes.DEFAULT_TYPE, delete_r
         f"📝 Motivo: {escape_md(reason)}"
     )
     await _reply(update, text)
+    await send_action_sticker(context.bot, chat.id, settings.sticker_ban)
 
 
 async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -215,6 +218,7 @@ async def mute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         f"📝 Motivo: {escape_md(reason)}"
     )
     await _reply(update, text)
+    await send_action_sticker(context.bot, chat.id, settings.sticker_mute)
 
 
 async def unmute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

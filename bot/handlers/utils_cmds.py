@@ -14,6 +14,7 @@ from telegram.ext import ContextTypes
 
 from config import settings
 from database import Database
+from utils.action_stickers import send_action_sticker
 from utils.activity_stats import get_activity_title
 from utils.formatting import error, escape_md, mention
 from utils.parsing import resolve_target
@@ -73,6 +74,7 @@ async def del_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         f"📝 Motivo: {escape_md(reason)}"
     )
     notice = await context.bot.send_message(chat.id, notice_text, parse_mode=ParseMode.MARKDOWN_V2)
+    await send_action_sticker(context.bot, chat.id, settings.sticker_del)
 
     async def _delete_notice_job(job_context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
@@ -263,3 +265,24 @@ async def send_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await context.bot.delete_message(chat.id, message.message_id)
     except TelegramError:
         pass  # Si no se pudo borrar (falta permiso), no es crítico.
+
+
+async def stickerid_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/stickerid — respondé a un sticker con este comando y el bot te
+    devuelve su file_id, para usarlo en STICKER_BAN / STICKER_MUTE /
+    STICKER_BRB / STICKER_BRB_BACK / STICKER_DEL en el archivo .env."""
+    message = update.effective_message
+    reply = message.reply_to_message
+
+    if not reply or not reply.sticker:
+        await message.reply_text(
+            "Respondé a un sticker con /stickerid para obtener su ID\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    file_id = reply.sticker.file_id
+    await message.reply_text(
+        f"🆔 ID de este sticker:\n`{escape_md(file_id)}`",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )

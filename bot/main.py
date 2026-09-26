@@ -125,6 +125,7 @@ from handlers.utils_cmds import (
     pin_command,
     ping_command,
     send_command,
+    stickerid_command,
 )
 from handlers.warnings import warnings_callback
 from handlers.xmod import try_consume_pending_xmod_words, xmod_menu_callback
@@ -175,6 +176,7 @@ BOT_COMMANDS = [
     BotCommand("mute", "Silenciar a un usuario (permanente o temporal)"),
     BotCommand("unmute", "Quitar el silencio a un usuario"),
     BotCommand("del", "Borrar el mensaje respondido"),
+    BotCommand("stickerid", "Ver el file_id de un sticker (respondiendo a él)"),
     BotCommand("id", "Ver tu ID o el de a quien respondas"),
     BotCommand("info", "Ver información de un usuario"),
     BotCommand("ping", "Ver la latencia del bot"),
@@ -653,6 +655,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("quitarpermiso", quitarpermiso_command))
     application.add_handler(CommandHandler("unadmin", unadmin_command))
     application.add_handler(CommandHandler("del", del_command))
+    application.add_handler(CommandHandler("stickerid", stickerid_command))
     application.add_handler(CommandHandler("id", id_command))
     application.add_handler(CommandHandler("info", info_command))
     application.add_handler(CommandHandler("ping", ping_command))

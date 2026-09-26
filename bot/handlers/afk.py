@@ -27,7 +27,9 @@ from telegram import MessageEntity, Update
 from telegram.constants import MessageEntityType, ParseMode
 from telegram.ext import ContextTypes
 
+from config import settings
 from database import AfkRecord, Database
+from utils.action_stickers import send_action_sticker
 from utils.formatting import escape_md, humanize_seconds, mention
 from utils.permissions import is_owner
 
@@ -91,6 +93,7 @@ async def _activate_afk(update: Update, context: ContextTypes.DEFAULT_TYPE, reas
         f"📝 Motivo: {reason_display}"
     )
     await update.effective_message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
+    await send_action_sticker(context.bot, chat.id, settings.sticker_brb)
 
 
 async def brb_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -227,6 +230,8 @@ async def track_and_check_afk(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"📝 Motivo: {reason_display}"
         )
         await message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)
+        if chat is not None:
+            await send_action_sticker(context.bot, chat.id, settings.sticker_brb_back)
         return
 
     if not cache:
