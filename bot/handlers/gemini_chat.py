@@ -340,6 +340,20 @@ async def ceo_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await _handle_audio_request(update, context, text_to_speak)
         return
 
+    # ¿Es una orden de moderación en lenguaje natural ("CEO banealo",
+    # "CEO mutealo 10 minutos", "CEO borra esto")? Import perezoso para
+    # evitar import circular (ceo_moderation importa _ask_ai de este
+    # mismo módulo). Si algo falla acá, NUNCA debe frenar el chat normal.
+    if remainder:
+        try:
+            from handlers.ceo_moderation import try_handle_moderation_intent
+            handled = await try_handle_moderation_intent(update, context, remainder)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Error en el clasificador de moderación de CEO (sigo con chat normal): %s", exc)
+            handled = False
+        if handled:
+            return
+
     # Chat normal de texto
     question = remainder or "Salúdame brevemente y pregúntame en qué puedes ayudar."
     user_id = update.effective_user.id if update.effective_user else 0
