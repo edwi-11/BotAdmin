@@ -103,7 +103,7 @@ _CLASSIFY_PROMPT = (
     "- Si CLARAMENTE quieren que se haga algo pero no se entiende cuál de las acciones de "
     "arriba (ej. \"CEO haz algo con ese\"), action = \"AMBIGUOUS\".\n"
     "- Ante la duda entre una orden concreta de esta lista y charla normal, elegí NONE.\n\n"
-    "Mensaje: {message}"
+    "Mensaje: __MENSAJE_A_CLASIFICAR__"
 )
 
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
@@ -118,7 +118,7 @@ async def classify_moderation_intent(text: str) -> Optional[dict]:
     if not settings.gemini_api_key and not settings.groq_api_key:
         return None
     try:
-        raw = await _ask_ai(_CLASSIFY_PROMPT.format(message=text))
+        raw = await _ask_ai(_CLASSIFY_PROMPT.replace("__MENSAJE_A_CLASIFICAR__", text))
     except Exception as exc:  # noqa: BLE001
         logger.info("No se pudo clasificar intención de moderación (sigue como chat normal): %s", exc)
         return None

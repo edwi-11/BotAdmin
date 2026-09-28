@@ -393,35 +393,35 @@ async def check_banned_words(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if is_owner(user.id) or await is_chat_admin(context.bot, chat.id, user.id) or await db.is_user_freed(chat.id, user.id):
         return
 
-    settings = await db.get_group_settings(chat.id)
+    group_settings = await db.get_group_settings(chat.id)
 
-    if settings.filter_delete:
+    if group_settings.filter_delete:
         try:
             await context.bot.delete_message(chat.id, message.message_id)
         except TelegramError:
             pass
 
-    action_taken = "Se eliminó tu mensaje" if settings.filter_delete else "Se detectó tu mensaje"
+    action_taken = "Se eliminó tu mensaje" if group_settings.filter_delete else "Se detectó tu mensaje"
 
     try:
-        if settings.filter_punishment == "mute":
+        if group_settings.filter_punishment == "mute":
             until_date = None
-            if settings.filter_mute_seconds > 0:
-                until_date = datetime.now(timezone.utc) + timedelta(seconds=settings.filter_mute_seconds)
+            if group_settings.filter_mute_seconds > 0:
+                until_date = datetime.now(timezone.utc) + timedelta(seconds=group_settings.filter_mute_seconds)
             await context.bot.restrict_chat_member(
                 chat.id, user.id,
                 permissions=ChatPermissions(can_send_messages=False, can_send_other_messages=False,
                                              can_send_polls=False, can_add_web_page_previews=False),
                 until_date=until_date,
             )
-            duration_text = "permanentemente" if settings.filter_mute_seconds == 0 else \
-                f"por {humanize_seconds(settings.filter_mute_seconds)}"
+            duration_text = "permanentemente" if group_settings.filter_mute_seconds == 0 else \
+                f"por {humanize_seconds(group_settings.filter_mute_seconds)}"
             notice = (
                 f"🚫 *Palabra prohibida detectada*\n"
                 f"{action_taken} por contener una palabra prohibida en este grupo\\.\n"
                 f"🔇 Quedaste silenciado {escape_md(duration_text)}\\."
             )
-        elif settings.filter_punishment == "ban":
+        elif group_settings.filter_punishment == "ban":
             await context.bot.ban_chat_member(chat.id, user.id)
             notice = (
                 f"🚫 *Palabra prohibida detectada*\n"
