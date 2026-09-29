@@ -13,6 +13,11 @@ por cada chat.
                        de usuarios (/reportar, "@admin" — ver
                        handlers/reports.py) como el aviso de cada acción
                        automática que tome CEO Brain en <idGrupo>.
+                       Lo puede usar el propietario del bot Y el dueño (o
+                       cofundador) de CUALQUIERA de los dos grupos: el de
+                       staff o el monitoreado. Responde con un mensaje de
+                       confirmación (nuevo / ya estaba configurado /
+                       actualizado).
 
 Cómo aprende:
 Cuando Brain está activo y un administrador ejecuta un comando real de
@@ -36,6 +41,7 @@ no actúa — nunca revienta el procesamiento normal de mensajes del grupo.
 """
 from __future__ import annotations
 
+import html
 import json
 import logging
 import re
@@ -44,13 +50,22 @@ from typing import Optional
 
 from telegram import ChatPermissions, Update
 from telegram.constants import ParseMode
-from telegram.error import TelegramError
+from telegram.error import ChatMigrated, TelegramError
 from telegram.ext import ContextTypes
 
 from database import Database
 from handlers.gemini_chat import _ask_ai  # mismo Gemini+Groq que el resto del chat de CEO
-from utils.formatting import error, escape_md, mention, success
-from utils.permissions import check_bot_rights, check_group_owner_or_cofounder, is_owner, is_real_admin
+from utils.formatting import error, success
+from utils.permissions import PermissionResult, check_bot_rights, get_member, is_owner, is_real_admin
+
+try:
+    from utils.permissions import check_group_owner_or_cofounder
+except ImportError:  # pragma: no cover - respaldo si esa utilidad no existe en esta versión
+    async def check_group_owner_or_cofounder(bot, chat_id: int, user_id: int) -> PermissionResult:
+        member = await get_member(bot, chat_id, user_id)
+        if member is not None and member.status == "creator":
+            return PermissionResult(True)
+        return PermissionResult(False, "Solo el dueño del grupo puede usar este comando.")
 
 logger = logging.getLogger(__name__)
 
@@ -118,8 +133,10 @@ async def ceochat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     chat = update.effective_chat
     message = update.effective_message
 
-    if not is_owner(user.id):
-        await message.reply_text(error("Solo el propietario del bot puede configurar esto."))
+    if chat.type not in ("group", "supergroup"):
+        await message.reply_text(
+            error("Usá /ceochat <idGrupo> escribiendo DENTRO del grupo de staff, no por privado.")
+        )
         return
 
     if not context.args or not context.args[0].lstrip("-").isdigit():
@@ -132,13 +149,70 @@ async def ceochat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     target_group_id = int(context.args[0])
+    if target_group_id == chat.id:
+        await message.reply_text(
+            error("El grupo de staff no puede ser el mismo grupo que se monitorea. "
+                  "Escribí /ceochat <idGrupo> dentro del grupo de staff, con el ID del OTRO grupo.")
+        )
+        return
+
+    # Permiso: propietario del bot, o dueño/cofundador del grupo de staff
+    # (donde se escribe el comando), o dueño/cofundador del grupo monitoreado.
+    allowed = is_owner(user.id)
+    if not allowed:
+        for group_id in (chat.id, target_group_id):
+            if (await check_group_owner_or_cofounder(context.bot, group_id, user.id)).allowed:
+                allowed = True
+                break
+    if not allowed:
+        await message.reply_text(
+            error("Solo el propietario del bot, o el dueño/cofundador de alguno de los dos grupos "
+                  "(el de staff o el monitoreado), puede configurar esto.")
+        )
+        return
+
+    try:
+        target_chat = await context.bot.get_chat(target_group_id)
+    except TelegramError as exc:
+        logger.info("/ceochat: no pude leer el grupo %s: %s", target_group_id, exc)
+        await message.reply_text(
+            error("No encuentro ese grupo. Revisá el ID (los supergrupos empiezan con -100) "
+                  "y que el bot esté dentro de ese grupo.")
+        )
+        return
+    if target_chat.type not in ("group", "supergroup"):
+        await message.reply_text(error("Ese ID no corresponde a un grupo."))
+        return
+
     db = _get_db(context)
-    await db.set_brain_report_chat(target_group_id, chat.id)
-    await message.reply_text(
-        success(f"Listo: los reportes y las acciones de CEO Brain del grupo `{target_group_id}` "
-                "van a llegar a este chat."),
-        parse_mode=ParseMode.MARKDOWN_V2,
-    )
+    previous = await db.get_brain_report_chat(target_group_id)
+    target_title = html.escape(target_chat.title or str(target_group_id))
+    target_line = f"📍 Grupo monitoreado: <b>{target_title}</b> (<code>{target_group_id}</code>)"
+
+    if previous == chat.id:
+        text = (
+            "ℹ️ <b>Este chat de staff ya estaba configurado.</b>\n"
+            f"{target_line}\n"
+            "No hice ningún cambio: los reportes y las acciones de CEO Brain ya llegan aquí."
+        )
+    else:
+        await db.set_brain_report_chat(target_group_id, chat.id)
+        if previous is None:
+            head = "✅ <b>Chat del staff configurado correctamente.</b>"
+        else:
+            head = (
+                "🔄 <b>Chat del staff actualizado.</b>\n"
+                f"Antes los avisos iban a <code>{previous}</code>; ahora llegan aquí."
+            )
+        text = (
+            f"{head}\n{target_line}\n"
+            "🚨 Aquí van a llegar los reportes de usuarios y las acciones de CEO Brain."
+        )
+
+    if not await db.is_brain_enabled(target_group_id):
+        text += "\n⚠️ CEO Brain todavía no está activado en ese grupo: usá /brain allá para activarlo."
+
+    await message.reply_text(text, parse_mode=ParseMode.HTML)
 
 
 # --------------------------------------------------------------------- #
@@ -263,18 +337,20 @@ async def check_brain_and_maybe_act(update: Update, context: ContextTypes.DEFAUL
     reason = (data.get("reason") or "Patrón aprendido por CEO Brain").strip()
     duration_seconds = data.get("duration_seconds")
 
+    who = f'<a href="tg://user?id={user.id}">{html.escape(user.first_name or "Usuario")}</a>'
+
     setattr(context, "_ceo_brain_auto", True)
     try:
         if action == "DEL":
             await message.delete()
-            resumen = f"🗑 Borré un mensaje de {mention(user.id, user.first_name)}."
+            resumen = f"🗑 Borré un mensaje de {who}."
         elif action == "BAN":
             await context.bot.ban_chat_member(chat.id, user.id)
-            resumen = f"🔨 Baneé a {mention(user.id, user.first_name)}."
+            resumen = f"🔨 Baneé a {who}."
         elif action == "KICK":
             await context.bot.ban_chat_member(chat.id, user.id)
             await context.bot.unban_chat_member(chat.id, user.id, only_if_banned=True)
-            resumen = f"👢 Expulsé a {mention(user.id, user.first_name)}."
+            resumen = f"👢 Expulsé a {who}."
         elif action == "MUTE":
             until_date = None
             if duration_seconds:
@@ -288,7 +364,7 @@ async def check_brain_and_maybe_act(update: Update, context: ContextTypes.DEFAUL
                                              can_send_polls=False, can_add_web_page_previews=False),
                 until_date=until_date,
             )
-            resumen = f"🔇 Silencié a {mention(user.id, user.first_name)}."
+            resumen = f"🔇 Silencié a {who}."
         elif action == "WARN":
             # Reutiliza el mismo límite/castigo configurado para /warn.
             from handlers.moderation import _apply_warn_punishment  # import perezoso, evita ciclo
@@ -297,15 +373,14 @@ async def check_brain_and_maybe_act(update: Update, context: ContextTypes.DEFAUL
             if count >= group_settings.warn_limit:
                 await db.reset_warnings(chat.id, user.id)
                 punishment_line = await _apply_warn_punishment(context, chat.id, user.id, group_settings)
+                # punishment_line viene formateada para MarkdownV2: se limpia para HTML.
+                punishment_html = html.escape(re.sub(r"\\(.)", r"\1", punishment_line))
                 resumen = (
-                    f"❗ {mention(user.id, user.first_name)} llegó a {count} advertencias.\n"
-                    f"{punishment_line}"
+                    f"❗ {who} llegó a {count} advertencias.\n"
+                    f"{punishment_html}"
                 )
             else:
-                resumen = (
-                    f"❗ Le di una advertencia a {mention(user.id, user.first_name)} "
-                    f"({count}/{group_settings.warn_limit})."
-                )
+                resumen = f"❗ Le di una advertencia a {who} ({count}/{group_settings.warn_limit})."
         else:
             return
     except TelegramError as exc:
@@ -318,13 +393,36 @@ async def check_brain_and_maybe_act(update: Update, context: ContextTypes.DEFAUL
                       user.first_name, chat.id, chat.title, reason)
 
     aviso = (
-        f"🧠 *CEO Brain actuó en {escape_md(chat.title or str(chat.id))}*\n"
+        f"🧠 <b>CEO Brain actuó en {html.escape(chat.title or str(chat.id))}</b>\n"
         f"{resumen}\n"
-        f"📝 Motivo: {escape_md(reason)}"
+        f"📝 Motivo: {html.escape(reason)}"
     )
-    report_chat_id = await db.get_brain_report_chat(chat.id)
-    if report_chat_id:
+    await _notify_staff(context, chat.id, aviso)
+
+
+async def _notify_staff(context: ContextTypes.DEFAULT_TYPE, group_id: int, text_html: str) -> None:
+    """Manda el aviso de una acción de CEO Brain al grupo de staff ligado con
+    /ceochat. Usa HTML (no MarkdownV2) para que ningún carácter del texto lo
+    haga fallar, y registra el error real si aun así no se puede enviar."""
+    db = _get_db(context)
+    report_chat_id = await db.get_brain_report_chat(group_id)
+    if not report_chat_id:
+        return
+    try:
+        await context.bot.send_message(
+            report_chat_id, text_html, parse_mode=ParseMode.HTML, disable_web_page_preview=True
+        )
+    except ChatMigrated as exc:
+        # El grupo de staff pasó a supergrupo: se actualiza el vínculo y se reintenta.
+        await db.set_brain_report_chat(group_id, exc.new_chat_id)
         try:
-            await context.bot.send_message(report_chat_id, aviso, parse_mode=ParseMode.MARKDOWN_V2)
-        except TelegramError as exc:
-            logger.info("No pude avisar la acción de CEO Brain al grupo de staff: %s", exc)
+            await context.bot.send_message(
+                exc.new_chat_id, text_html, parse_mode=ParseMode.HTML, disable_web_page_preview=True
+            )
+        except TelegramError as exc2:
+            logger.warning("CEO Brain: no pude avisar al staff (%s) tras migrar: %s", exc.new_chat_id, exc2)
+    except TelegramError as exc:
+        logger.warning(
+            "CEO Brain: no pude avisar la acción al grupo de staff %s (grupo %s): %s",
+            report_chat_id, group_id, exc,
+        )
