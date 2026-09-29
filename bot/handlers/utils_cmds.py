@@ -76,6 +76,9 @@ async def del_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     notice = await context.bot.send_message(chat.id, notice_text, parse_mode=ParseMode.MARKDOWN_V2)
     await send_action_sticker(context.bot, chat.id, settings.sticker_del)
 
+    from handlers.ceo_brain import record_pattern  # import perezoso, evita ciclo
+    await record_pattern(update, context, "DEL", reason=reason)
+
     async def _delete_notice_job(job_context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             await job_context.bot.delete_message(chat.id, notice.message_id)

@@ -367,6 +367,32 @@ CREATE TABLE IF NOT EXISTS fed_disabled_groups (
     disabled_at  INTEGER NOT NULL
 );
 
+-- CEO Brain: aprendizaje de patrones de moderación por chat (ver
+-- handlers/ceo_brain.py). Memoria totalmente independiente por group_id.
+CREATE TABLE IF NOT EXISTS brain_groups (
+    group_id     INTEGER PRIMARY KEY,
+    enabled_at   INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS brain_patterns (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id         INTEGER NOT NULL,
+    action           TEXT NOT NULL,
+    situation        TEXT NOT NULL,
+    reason           TEXT,
+    duration_seconds INTEGER,
+    created_at       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_brain_patterns_group ON brain_patterns (group_id);
+
+-- A qué grupo de staff (report_chat_id) le llegan los reportes y los
+-- avisos de acciones automáticas de CEO Brain de cada group_id
+-- monitoreado (configurado con /ceochat, ver handlers/ceo_brain.py).
+CREATE TABLE IF NOT EXISTS brain_report_links (
+    group_id        INTEGER PRIMARY KEY,
+    report_chat_id  INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS fed_bans (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     fed_id      TEXT NOT NULL,
@@ -1976,6 +2002,71 @@ class Database:
             "SELECT 1 FROM fed_disabled_groups WHERE group_id = ?", (group_id,)
         )
         return await cursor.fetchone() is not None
+
+    # ------------------------------------------------------------------ #
+    # CEO Brain (ver handlers/ceo_brain.py) — aprendizaje de moderación
+    # independiente por chat.
+    # ------------------------------------------------------------------ #
+    async def enable_brain(self, group_id: int) -> None:
+        await self.conn.execute(
+            "INSERT INTO brain_groups (group_id, enabled_at) VALUES (?, ?) "
+            "ON CONFLICT(group_id) DO NOTHING",
+            (group_id, int(time.time())),
+        )
+        await self.conn.commit()
+
+    async def disable_brain(self, group_id: int) -> None:
+        await self.conn.execute("DELETE FROM brain_groups WHERE group_id = ?", (group_id,))
+        await self.conn.commit()
+
+    async def is_brain_enabled(self, group_id: int) -> bool:
+        cursor = await self.conn.execute(
+            "SELECT 1 FROM brain_groups WHERE group_id = ?", (group_id,)
+        )
+        return await cursor.fetchone() is not None
+
+    async def add_brain_pattern(
+        self, group_id: int, action: str, situation: str,
+        reason: Optional[str] = None, duration_seconds: Optional[int] = None,
+    ) -> None:
+        await self.conn.execute(
+            "INSERT INTO brain_patterns (group_id, action, situation, reason, duration_seconds, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (group_id, action, situation[:500], reason, duration_seconds, int(time.time())),
+        )
+        # Se guardan como máximo los 60 patrones más recientes por chat,
+        # para no hacer crecer el prompt de clasificación sin límite.
+        await self.conn.execute(
+            "DELETE FROM brain_patterns WHERE group_id = ? AND id NOT IN ("
+            "  SELECT id FROM brain_patterns WHERE group_id = ? ORDER BY id DESC LIMIT 60"
+            ")",
+            (group_id, group_id),
+        )
+        await self.conn.commit()
+
+    async def get_brain_patterns(self, group_id: int, limit: int = 40) -> list[dict]:
+        cursor = await self.conn.execute(
+            "SELECT action, situation, reason, duration_seconds FROM brain_patterns "
+            "WHERE group_id = ? ORDER BY id DESC LIMIT ?",
+            (group_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def set_brain_report_chat(self, group_id: int, report_chat_id: int) -> None:
+        await self.conn.execute(
+            "INSERT INTO brain_report_links (group_id, report_chat_id) VALUES (?, ?) "
+            "ON CONFLICT(group_id) DO UPDATE SET report_chat_id = excluded.report_chat_id",
+            (group_id, report_chat_id),
+        )
+        await self.conn.commit()
+
+    async def get_brain_report_chat(self, group_id: int) -> Optional[int]:
+        cursor = await self.conn.execute(
+            "SELECT report_chat_id FROM brain_report_links WHERE group_id = ?", (group_id,)
+        )
+        row = await cursor.fetchone()
+        return int(row["report_chat_id"]) if row else None
 
     async def get_fed_groups(self, fed_id: str) -> list[int]:
         cursor = await self.conn.execute("SELECT group_id FROM fed_groups WHERE fed_id = ?", (fed_id,))

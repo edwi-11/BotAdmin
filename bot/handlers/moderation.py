@@ -97,6 +97,9 @@ async def _ban_impl(update: Update, context: ContextTypes.DEFAULT_TYPE, delete_r
     await _reply(update, text)
     await send_action_sticker(context.bot, chat.id, settings.sticker_ban)
 
+    from handlers.ceo_brain import record_pattern  # import perezoso, evita ciclo
+    await record_pattern(update, context, "BAN", reason=reason)
+
 
 async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _ban_impl(update, context, delete_replied=False)
@@ -153,6 +156,9 @@ async def _kick_impl(update: Update, context: ContextTypes.DEFAULT_TYPE, delete_
     )
     await _reply(update, text)
     await send_action_sticker(context.bot, chat.id, settings.sticker_completado)
+
+    from handlers.ceo_brain import record_pattern  # import perezoso, evita ciclo
+    await record_pattern(update, context, "KICK", reason=reason)
 
 
 async def kick_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -221,6 +227,10 @@ async def mute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
     await _reply(update, text)
     await send_action_sticker(context.bot, chat.id, settings.sticker_mute)
+
+    from handlers.ceo_brain import record_pattern  # import perezoso, evita ciclo
+    duration_seconds = int(duration.total_seconds()) if duration else None
+    await record_pattern(update, context, "MUTE", reason=reason, duration_seconds=duration_seconds)
 
 
 async def unmute_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -303,6 +313,9 @@ async def _warn_impl(update: Update, context: ContextTypes.DEFAULT_TYPE, delete_
 
     await db.add_log("warn", executor.id, executor.first_name, resolved.user_id,
                       resolved.display_name, chat.id, chat.title, reason)
+
+    from handlers.ceo_brain import record_pattern  # import perezoso, evita ciclo
+    await record_pattern(update, context, "WARN", reason=reason)
 
     if count < settings.warn_limit:
         text = (

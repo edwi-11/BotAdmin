@@ -126,6 +126,22 @@ async def _notify_admins(
             continue
         sent += 1
         await db.add_report_notification(report_id, admin_user.id, msg.message_id)
+
+    report_chat_id = await db.get_brain_report_chat(chat.id)
+    if report_chat_id:
+        try:
+            staff_msg = await context.bot.send_message(
+                report_chat_id, text, parse_mode=ParseMode.MARKDOWN_V2,
+                reply_markup=keyboard, disable_web_page_preview=True,
+            )
+        except TelegramError as exc:
+            logger.info("No pude mandar el reporte al grupo de staff configurado (/ceochat): %s", exc)
+        else:
+            # Se guarda con el mismo mecanismo que las notificaciones privadas
+            # a los admins, así el botón Pendiente/Resuelto también actualiza
+            # este mensaje en el grupo de staff.
+            await db.add_report_notification(report_id, report_chat_id, staff_msg.message_id)
+
     return sent, failed
 
 
