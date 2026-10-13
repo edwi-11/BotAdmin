@@ -211,7 +211,7 @@ def _menu_content(title: str, gid: int, show_groups_back: bool):
         [InlineKeyboardButton("➕ Nueva votación", callback_data=f"vt:new:{gid}")],
         [InlineKeyboardButton("📋 Listar votaciones", callback_data=f"vt:list:{gid}")],
         [InlineKeyboardButton("👁 Vista previa global", callback_data=f"vt:glob:{gid}")],
-        [InlineKeyboardButton("🚀 Lanzar todas las pendientes", callback_data=f"vt:launchall:{gid}")],
+        [InlineKeyboardButton("🚀 Lanzar todas", callback_data=f"vt:launchall:{gid}")],
         [InlineKeyboardButton("📊 Resultados de todas", callback_data=f"vt:resall:{gid}")],
     ]
     if show_groups_back:
@@ -591,6 +591,34 @@ async def _launch(context, vid: int) -> str | None:
     return None
 
 
+async def _launch_all(context, gid: int) -> tuple[int, str | None]:
+    """Activa TODAS las votaciones en borrador del grupo y publica UN solo
+    mensaje ("Las votaciones del grupo X han empezado") con un botón que
+    lleva al privado, donde cada persona elige la votación con botones.
+    Devuelve (cuántas se lanzaron, error o None)."""
+    db = _db(context)
+    launched = []
+    for x in await db.list_votaciones(gid):
+        if x["status"] == "draft" and await db.launch_votacion(x["id"]):
+            launched.append(x["id"])
+    if not launched:
+        return 0, "No hay votaciones en borrador para lanzar."
+    title = await db.get_group_title(gid) or "del grupo"
+    text = (f"🗳 <b>Las votaciones del grupo {_e(title)} han empezado</b>\n\n"
+            "Tocá el botón, abrí mi privado y elegí en cuál querés votar.")
+    markup = InlineKeyboardMarkup([[InlineKeyboardButton(
+        "🗳 Votar", url=f"https://t.me/{context.bot.username}?start=votar_{gid}")]])
+    try:
+        # Sin group_message_id a propósito: este cartel es compartido por
+        # varias votaciones y no debe editarse cuando una de ellas cierre.
+        await context.bot.send_message(gid, text, parse_mode="HTML", reply_markup=markup)
+    except TelegramError as exc:
+        for vid in launched:
+            await db.revert_votacion_to_draft(vid)
+        return 0, f"No pude publicar en el grupo: {exc}"
+    return len(launched), None
+
+
 async def _edit_group_message(bot, v, text: str) -> None:
     """Reemplaza el cartel del grupo (y le saca el botón). Sirve para texto o foto."""
     try:
@@ -771,19 +799,11 @@ async def votaciones_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         text, markup = await _view_content(db, vid)
         await _edit(query, "🚀 ¡Lanzada en el grupo!\n\n" + text, markup)
     elif action == "launchall":
-        drafts = [x for x in await db.list_votaciones(gid) if x["status"] == "draft"]
-        if not drafts:
-            await query.answer("No hay votaciones en borrador para lanzar.", show_alert=True)
+        count, err = await _launch_all(context, gid)
+        if err:
+            await query.answer(err, show_alert=True)
             return
-        ok, fail = 0, []
-        for x in drafts:
-            err = await _launch(context, x["id"])
-            if err:
-                fail.append(f"#{x['id']}: {err}")
-            else:
-                ok += 1
-        await query.answer((f"🚀 Lanzadas: {ok}/{len(drafts)}" + ("\n" + "\n".join(fail) if fail else ""))[:190],
-                           show_alert=True)
+        await query.answer(f"🚀 {count} votación(es) lanzadas. Se avisó en el grupo.", show_alert=True)
         return
     elif action == "close":
         closed, sent_to = await finalize_votacion(context.bot, db, vid, user.id, "manual")
