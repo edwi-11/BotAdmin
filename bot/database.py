@@ -512,7 +512,9 @@ CREATE TABLE IF NOT EXISTS votaciones (
     closed_by       INTEGER,
     close_reason    TEXT,
     group_message_id INTEGER,
-    results_sent_to INTEGER
+    results_sent_to INTEGER,
+    photo_file_id   TEXT,
+    max_choices     INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_votaciones_group ON votaciones (group_id, status);
 
@@ -533,12 +535,34 @@ CREATE TABLE IF NOT EXISTS votacion_votes (
     voted_at      INTEGER NOT NULL,
     PRIMARY KEY (votacion_id, voter_id)
 );
+
+-- Votación abierta: no hay candidatos predefinidos. Cada persona manda uno
+-- (o hasta max_choices) @usuario y el bot suma cuántas veces salió cada uno.
+-- La PRIMARY KEY de ballots (una papeleta por persona y votación) es la
+-- garantía final contra el voto doble.
+CREATE TABLE IF NOT EXISTS votacion_ballots (
+    votacion_id   INTEGER NOT NULL,
+    voter_id      INTEGER NOT NULL,
+    voted_at      INTEGER NOT NULL,
+    PRIMARY KEY (votacion_id, voter_id)
+);
+CREATE TABLE IF NOT EXISTS votacion_choices (
+    votacion_id   INTEGER NOT NULL,
+    voter_id      INTEGER NOT NULL,
+    username      TEXT NOT NULL,
+    PRIMARY KEY (votacion_id, voter_id, username)
+);
+CREATE INDEX IF NOT EXISTS idx_votacion_choices ON votacion_choices (votacion_id, username);
 """
 
 # Columnas que se añadieron después de la primera versión del esquema.
 # Se agregan en caliente con ALTER TABLE para no romper bases de datos
 # ya existentes que fueron creadas antes de que estas columnas existieran.
 _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
+    "votaciones": [
+        ("photo_file_id", "TEXT"),
+        ("max_choices", "INTEGER NOT NULL DEFAULT 1"),
+    ],
     "group_settings": [
         ("afk_enabled", "INTEGER NOT NULL DEFAULT 1"),
         ("delete_join", "INTEGER NOT NULL DEFAULT 0"),
@@ -2713,24 +2737,18 @@ class Database:
         await self.conn.commit()
 
     # ------------------------------------------------------------------ #
-    # Votaciones (handlers/votaciones.py)
+    # Votaciones (handlers/votaciones.py) — votación abierta con @usuario
     # ------------------------------------------------------------------ #
     async def create_votacion(
-        self, group_id: int, title: str, usernames: list[str], duration_secs: int, created_by: int,
+        self, group_id: int, title: str, photo_file_id: str | None, duration_secs: int, created_by: int,
     ) -> int:
         cursor = await self.conn.execute(
-            "INSERT INTO votaciones (group_id, title, duration_secs, status, created_by, created_at) "
-            "VALUES (?, ?, ?, 'draft', ?, ?)",
-            (group_id, title, duration_secs, created_by, int(time.time())),
+            "INSERT INTO votaciones (group_id, title, photo_file_id, duration_secs, status, created_by, created_at) "
+            "VALUES (?, ?, ?, ?, 'draft', ?, ?)",
+            (group_id, title, photo_file_id, duration_secs, created_by, int(time.time())),
         )
-        vid = cursor.lastrowid
-        for pos, name in enumerate(usernames):
-            await self.conn.execute(
-                "INSERT OR IGNORE INTO votacion_candidates (votacion_id, username, position) VALUES (?, ?, ?)",
-                (vid, name.lower(), pos),
-            )
         await self.conn.commit()
-        return vid
+        return cursor.lastrowid
 
     async def get_votacion(self, vid: int) -> aiosqlite.Row | None:
         cursor = await self.conn.execute("SELECT * FROM votaciones WHERE id = ?", (vid,))
@@ -2742,41 +2760,27 @@ class Database:
         )
         return list(await cursor.fetchall())
 
-    async def get_votacion_candidates(self, vid: int) -> list[aiosqlite.Row]:
-        cursor = await self.conn.execute(
-            "SELECT * FROM votacion_candidates WHERE votacion_id = ? ORDER BY position, id", (vid,)
-        )
+    async def get_active_votaciones(self, group_id: int | None = None) -> list[aiosqlite.Row]:
+        if group_id is None:
+            cursor = await self.conn.execute("SELECT * FROM votaciones WHERE status = 'active' ORDER BY id")
+        else:
+            cursor = await self.conn.execute(
+                "SELECT * FROM votaciones WHERE status = 'active' AND group_id = ? ORDER BY id", (group_id,)
+            )
         return list(await cursor.fetchall())
 
-    async def add_votacion_candidates(self, vid: int, usernames: list[str]) -> int:
-        cursor = await self.conn.execute(
-            "SELECT COALESCE(MAX(position), -1) AS p FROM votacion_candidates WHERE votacion_id = ?", (vid,)
-        )
-        pos = (await cursor.fetchone())["p"] + 1
-        added = 0
-        for name in usernames:
-            cur = await self.conn.execute(
-                "INSERT OR IGNORE INTO votacion_candidates (votacion_id, username, position) VALUES (?, ?, ?)",
-                (vid, name.lower(), pos),
-            )
-            if cur.rowcount:
-                added += 1
-                pos += 1
-        await self.conn.commit()
-        return added
-
-    async def remove_votacion_candidate(self, vid: int, candidate_id: int) -> None:
-        await self.conn.execute(
-            "DELETE FROM votacion_votes WHERE votacion_id = ? AND candidate_id = ?", (vid, candidate_id)
-        )
-        await self.conn.execute(
-            "DELETE FROM votacion_candidates WHERE votacion_id = ? AND id = ?", (vid, candidate_id)
-        )
-        await self.conn.commit()
-
-    async def update_votacion(self, vid: int, *, title: str | None = None, duration_secs: int | None = None) -> None:
+    async def update_votacion(
+        self, vid: int, *, title: str | None = None, duration_secs: int | None = None,
+        max_choices: int | None = None, photo_file_id: str | None = None, clear_photo: bool = False,
+    ) -> None:
         if title is not None:
             await self.conn.execute("UPDATE votaciones SET title = ? WHERE id = ?", (title, vid))
+        if max_choices is not None:
+            await self.conn.execute("UPDATE votaciones SET max_choices = ? WHERE id = ?", (max_choices, vid))
+        if photo_file_id is not None:
+            await self.conn.execute("UPDATE votaciones SET photo_file_id = ? WHERE id = ?", (photo_file_id, vid))
+        if clear_photo:
+            await self.conn.execute("UPDATE votaciones SET photo_file_id = NULL WHERE id = ?", (vid,))
         if duration_secs is not None:
             # Si ya está activa, el cierre automático se recalcula desde el lanzamiento.
             await self.conn.execute(
@@ -2788,8 +2792,8 @@ class Database:
         await self.conn.commit()
 
     async def delete_votacion(self, vid: int) -> None:
-        await self.conn.execute("DELETE FROM votacion_votes WHERE votacion_id = ?", (vid,))
-        await self.conn.execute("DELETE FROM votacion_candidates WHERE votacion_id = ?", (vid,))
+        await self.conn.execute("DELETE FROM votacion_choices WHERE votacion_id = ?", (vid,))
+        await self.conn.execute("DELETE FROM votacion_ballots WHERE votacion_id = ?", (vid,))
         await self.conn.execute("DELETE FROM votaciones WHERE id = ?", (vid,))
         await self.conn.commit()
 
@@ -2838,26 +2842,25 @@ class Database:
         )
         return list(await cursor.fetchall())
 
-    async def get_active_votaciones_with_candidate(self, username: str) -> list[aiosqlite.Row]:
-        cursor = await self.conn.execute(
-            "SELECT v.* FROM votaciones v JOIN votacion_candidates c ON c.votacion_id = v.id "
-            "WHERE v.status = 'active' AND c.username = ?", (username.lstrip("@").lower(),),
-        )
-        return list(await cursor.fetchall())
-
     async def has_voted(self, vid: int, voter_id: int) -> bool:
         cursor = await self.conn.execute(
-            "SELECT 1 FROM votacion_votes WHERE votacion_id = ? AND voter_id = ?", (vid, voter_id)
+            "SELECT 1 FROM votacion_ballots WHERE votacion_id = ? AND voter_id = ?", (vid, voter_id)
         )
         return await cursor.fetchone() is not None
 
-    async def cast_vote(self, vid: int, voter_id: int, candidate_id: int) -> bool:
-        """Registra el voto. False si esa persona ya había votado."""
+    async def cast_ballot(self, vid: int, voter_id: int, usernames: list[str]) -> bool:
+        """Guarda la papeleta completa (1 o más @usuario). False si esa
+        persona ya había votado en esta votación."""
         try:
             await self.conn.execute(
-                "INSERT INTO votacion_votes (votacion_id, voter_id, candidate_id, voted_at) VALUES (?, ?, ?, ?)",
-                (vid, voter_id, candidate_id, int(time.time())),
+                "INSERT INTO votacion_ballots (votacion_id, voter_id, voted_at) VALUES (?, ?, ?)",
+                (vid, voter_id, int(time.time())),
             )
+            for name in usernames:
+                await self.conn.execute(
+                    "INSERT OR IGNORE INTO votacion_choices (votacion_id, voter_id, username) VALUES (?, ?, ?)",
+                    (vid, voter_id, name.lower()),
+                )
             await self.conn.commit()
             return True
         except aiosqlite.IntegrityError:
@@ -2865,10 +2868,15 @@ class Database:
             return False
 
     async def get_votacion_counts(self, vid: int) -> list[tuple[str, int]]:
+        """Cuántas veces se mandó cada @usuario, de mayor a menor."""
         cursor = await self.conn.execute(
-            "SELECT c.username AS username, COUNT(v.voter_id) AS votes "
-            "FROM votacion_candidates c LEFT JOIN votacion_votes v "
-            "ON v.candidate_id = c.id AND v.votacion_id = c.votacion_id "
-            "WHERE c.votacion_id = ? GROUP BY c.id ORDER BY votes DESC, c.position, c.id", (vid,),
+            "SELECT username, COUNT(*) AS votes FROM votacion_choices WHERE votacion_id = ? "
+            "GROUP BY username ORDER BY votes DESC, username", (vid,),
         )
         return [(r["username"], r["votes"]) for r in await cursor.fetchall()]
+
+    async def count_votacion_voters(self, vid: int) -> int:
+        cursor = await self.conn.execute(
+            "SELECT COUNT(*) AS c FROM votacion_ballots WHERE votacion_id = ?", (vid,)
+        )
+        return (await cursor.fetchone())["c"]
