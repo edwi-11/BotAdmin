@@ -495,6 +495,44 @@ CREATE TABLE IF NOT EXISTS raid_removals (
     removed_at    INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_raid_removals_group ON raid_removals (group_id, removed_at);
+
+-- Sistema de votaciones (handlers/votaciones.py). status: draft | active | closed.
+-- duration_secs = 0 significa "solo cierre manual".
+CREATE TABLE IF NOT EXISTS votaciones (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id        INTEGER NOT NULL,
+    title           TEXT NOT NULL,
+    duration_secs   INTEGER NOT NULL DEFAULT 0,
+    status          TEXT NOT NULL DEFAULT 'draft',
+    created_by      INTEGER NOT NULL,
+    created_at      INTEGER NOT NULL,
+    launched_at     INTEGER,
+    closes_at       INTEGER,
+    closed_at       INTEGER,
+    closed_by       INTEGER,
+    close_reason    TEXT,
+    group_message_id INTEGER,
+    results_sent_to INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_votaciones_group ON votaciones (group_id, status);
+
+CREATE TABLE IF NOT EXISTS votacion_candidates (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    votacion_id   INTEGER NOT NULL,
+    username      TEXT NOT NULL,
+    position      INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (votacion_id, username)
+);
+
+-- La PRIMARY KEY (votacion_id, voter_id) es la garantía final de que una
+-- persona no puede votar dos veces en la misma votación.
+CREATE TABLE IF NOT EXISTS votacion_votes (
+    votacion_id   INTEGER NOT NULL,
+    voter_id      INTEGER NOT NULL,
+    candidate_id  INTEGER NOT NULL,
+    voted_at      INTEGER NOT NULL,
+    PRIMARY KEY (votacion_id, voter_id)
+);
 """
 
 # Columnas que se añadieron después de la primera versión del esquema.
@@ -2674,3 +2712,163 @@ class Database:
         )
         await self.conn.commit()
 
+    # ------------------------------------------------------------------ #
+    # Votaciones (handlers/votaciones.py)
+    # ------------------------------------------------------------------ #
+    async def create_votacion(
+        self, group_id: int, title: str, usernames: list[str], duration_secs: int, created_by: int,
+    ) -> int:
+        cursor = await self.conn.execute(
+            "INSERT INTO votaciones (group_id, title, duration_secs, status, created_by, created_at) "
+            "VALUES (?, ?, ?, 'draft', ?, ?)",
+            (group_id, title, duration_secs, created_by, int(time.time())),
+        )
+        vid = cursor.lastrowid
+        for pos, name in enumerate(usernames):
+            await self.conn.execute(
+                "INSERT OR IGNORE INTO votacion_candidates (votacion_id, username, position) VALUES (?, ?, ?)",
+                (vid, name.lower(), pos),
+            )
+        await self.conn.commit()
+        return vid
+
+    async def get_votacion(self, vid: int) -> aiosqlite.Row | None:
+        cursor = await self.conn.execute("SELECT * FROM votaciones WHERE id = ?", (vid,))
+        return await cursor.fetchone()
+
+    async def list_votaciones(self, group_id: int) -> list[aiosqlite.Row]:
+        cursor = await self.conn.execute(
+            "SELECT * FROM votaciones WHERE group_id = ? ORDER BY id", (group_id,)
+        )
+        return list(await cursor.fetchall())
+
+    async def get_votacion_candidates(self, vid: int) -> list[aiosqlite.Row]:
+        cursor = await self.conn.execute(
+            "SELECT * FROM votacion_candidates WHERE votacion_id = ? ORDER BY position, id", (vid,)
+        )
+        return list(await cursor.fetchall())
+
+    async def add_votacion_candidates(self, vid: int, usernames: list[str]) -> int:
+        cursor = await self.conn.execute(
+            "SELECT COALESCE(MAX(position), -1) AS p FROM votacion_candidates WHERE votacion_id = ?", (vid,)
+        )
+        pos = (await cursor.fetchone())["p"] + 1
+        added = 0
+        for name in usernames:
+            cur = await self.conn.execute(
+                "INSERT OR IGNORE INTO votacion_candidates (votacion_id, username, position) VALUES (?, ?, ?)",
+                (vid, name.lower(), pos),
+            )
+            if cur.rowcount:
+                added += 1
+                pos += 1
+        await self.conn.commit()
+        return added
+
+    async def remove_votacion_candidate(self, vid: int, candidate_id: int) -> None:
+        await self.conn.execute(
+            "DELETE FROM votacion_votes WHERE votacion_id = ? AND candidate_id = ?", (vid, candidate_id)
+        )
+        await self.conn.execute(
+            "DELETE FROM votacion_candidates WHERE votacion_id = ? AND id = ?", (vid, candidate_id)
+        )
+        await self.conn.commit()
+
+    async def update_votacion(self, vid: int, *, title: str | None = None, duration_secs: int | None = None) -> None:
+        if title is not None:
+            await self.conn.execute("UPDATE votaciones SET title = ? WHERE id = ?", (title, vid))
+        if duration_secs is not None:
+            # Si ya está activa, el cierre automático se recalcula desde el lanzamiento.
+            await self.conn.execute(
+                "UPDATE votaciones SET duration_secs = ?, "
+                "closes_at = CASE WHEN status = 'active' AND ? > 0 THEN launched_at + ? "
+                "WHEN status = 'active' THEN NULL ELSE closes_at END WHERE id = ?",
+                (duration_secs, duration_secs, duration_secs, vid),
+            )
+        await self.conn.commit()
+
+    async def delete_votacion(self, vid: int) -> None:
+        await self.conn.execute("DELETE FROM votacion_votes WHERE votacion_id = ?", (vid,))
+        await self.conn.execute("DELETE FROM votacion_candidates WHERE votacion_id = ?", (vid,))
+        await self.conn.execute("DELETE FROM votaciones WHERE id = ?", (vid,))
+        await self.conn.commit()
+
+    async def launch_votacion(self, vid: int) -> bool:
+        """draft -> active. False si no estaba en borrador (evita doble lanzamiento)."""
+        now = int(time.time())
+        cursor = await self.conn.execute(
+            "UPDATE votaciones SET status = 'active', launched_at = ?, "
+            "closes_at = CASE WHEN duration_secs > 0 THEN ? + duration_secs ELSE NULL END "
+            "WHERE id = ? AND status = 'draft'",
+            (now, now, vid),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def revert_votacion_to_draft(self, vid: int) -> None:
+        await self.conn.execute(
+            "UPDATE votaciones SET status = 'draft', launched_at = NULL, closes_at = NULL "
+            "WHERE id = ? AND status = 'active'", (vid,),
+        )
+        await self.conn.commit()
+
+    async def set_votacion_group_message(self, vid: int, message_id: int) -> None:
+        await self.conn.execute("UPDATE votaciones SET group_message_id = ? WHERE id = ?", (message_id, vid))
+        await self.conn.commit()
+
+    async def close_votacion(self, vid: int, closed_by: int | None, reason: str) -> bool:
+        """active -> closed de forma atómica. False si ya estaba cerrada
+        (así el cierre manual y el automático nunca se pisan)."""
+        cursor = await self.conn.execute(
+            "UPDATE votaciones SET status = 'closed', closed_at = ?, closed_by = ?, close_reason = ? "
+            "WHERE id = ? AND status = 'active'",
+            (int(time.time()), closed_by, reason, vid),
+        )
+        await self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def set_votacion_results_sent_to(self, vid: int, user_id: int) -> None:
+        await self.conn.execute("UPDATE votaciones SET results_sent_to = ? WHERE id = ?", (user_id, vid))
+        await self.conn.commit()
+
+    async def get_expired_votaciones(self) -> list[aiosqlite.Row]:
+        cursor = await self.conn.execute(
+            "SELECT * FROM votaciones WHERE status = 'active' AND closes_at IS NOT NULL AND closes_at <= ?",
+            (int(time.time()),),
+        )
+        return list(await cursor.fetchall())
+
+    async def get_active_votaciones_with_candidate(self, username: str) -> list[aiosqlite.Row]:
+        cursor = await self.conn.execute(
+            "SELECT v.* FROM votaciones v JOIN votacion_candidates c ON c.votacion_id = v.id "
+            "WHERE v.status = 'active' AND c.username = ?", (username.lstrip("@").lower(),),
+        )
+        return list(await cursor.fetchall())
+
+    async def has_voted(self, vid: int, voter_id: int) -> bool:
+        cursor = await self.conn.execute(
+            "SELECT 1 FROM votacion_votes WHERE votacion_id = ? AND voter_id = ?", (vid, voter_id)
+        )
+        return await cursor.fetchone() is not None
+
+    async def cast_vote(self, vid: int, voter_id: int, candidate_id: int) -> bool:
+        """Registra el voto. False si esa persona ya había votado."""
+        try:
+            await self.conn.execute(
+                "INSERT INTO votacion_votes (votacion_id, voter_id, candidate_id, voted_at) VALUES (?, ?, ?, ?)",
+                (vid, voter_id, candidate_id, int(time.time())),
+            )
+            await self.conn.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            await self.conn.rollback()
+            return False
+
+    async def get_votacion_counts(self, vid: int) -> list[tuple[str, int]]:
+        cursor = await self.conn.execute(
+            "SELECT c.username AS username, COUNT(v.voter_id) AS votes "
+            "FROM votacion_candidates c LEFT JOIN votacion_votes v "
+            "ON v.candidate_id = c.id AND v.votacion_id = c.votacion_id "
+            "WHERE c.votacion_id = ? GROUP BY c.id ORDER BY votes DESC, c.position, c.id", (vid,),
+        )
+        return [(r["username"], r["votes"]) for r in await cursor.fetchall()]

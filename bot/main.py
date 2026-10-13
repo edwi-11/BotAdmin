@@ -148,6 +148,11 @@ from handlers.federations import (
     fedsync_command, import_command, joinfed_command, newfed_command,
     try_consume_fed_input,
 )
+from handlers.votaciones import (
+    cancelar_command, handle_votacion_start_deeplink, menu_votacion_command,
+    nueva_votacion_command, schedule_votaciones, try_consume_votacion_input,
+    votaciones_callback,
+)
 from utils.logger import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -222,6 +227,8 @@ BOT_COMMANDS = [
     BotCommand("recuperar", "Ver quiénes fueron expulsados y por quién"),
     BotCommand("resumen", "Resumir lo último que se habló en el grupo"),
     BotCommand("top", "Ver el top 10 de más mensajes del grupo"),
+    BotCommand("nuevavotacion", "Crear una votación (propietario del grupo)"),
+    BotCommand("menuvotacion", "Administrar las votaciones del grupo"),
 ]
 
 
@@ -418,6 +425,7 @@ async def post_init(application: Application) -> None:
         )
     schedule_activity_resets(application)
     schedule_weekly_summary(application)
+    schedule_votaciones(application)
     logger.info("Bot inicializado correctamente. Propietarios: %s", list(settings.owner_ids))
 
 
@@ -471,6 +479,8 @@ async def on_message_router(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     if await try_consume_fed_input(update, context):
         return
+    if await try_consume_votacion_input(update, context):
+        return
     if await try_consume_confession_input(update, context):
         return
     if await confesion_text_trigger(update, context):
@@ -508,6 +518,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if await handle_secret_start_deeplink(update, context):
         return
     if await handle_confession_start_deeplink(update, context):
+        return
+    if await handle_votacion_start_deeplink(update, context):
         return
     await menu_command(update, context)
 
@@ -711,7 +723,12 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("antiraid", antiraid_command))
     application.add_handler(CommandHandler("recuperar", recuperar_command))
     application.add_handler(CommandHandler("resumen", resumen_command))
-    application.add_handler(CommandHandler("cancelar", cancelar_confesion_command))
+    application.add_handler(CommandHandler("cancelar", cancelar_command))
+
+    # --- Votaciones (handlers/votaciones.py) ---
+    application.add_handler(CommandHandler("nuevavotacion", nueva_votacion_command))
+    application.add_handler(CommandHandler("menuvotacion", menu_votacion_command))
+    application.add_handler(CallbackQueryHandler(votaciones_callback, pattern=r"^vt:"))
     application.add_handler(CallbackQueryHandler(fedpromote_callback, pattern=r"^fedp:"))
     application.add_handler(CallbackQueryHandler(confession_reaction_callback, pattern=r"^conf:react:"))
     application.add_handler(CallbackQueryHandler(ranking_callback, pattern=r"^ranking_(today|week|all)$"))
