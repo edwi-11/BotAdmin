@@ -28,8 +28,9 @@ import html
 import logging
 import re
 import time
+import unicodedata
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, Update
 from telegram.constants import ChatMemberStatus, ChatType
 from telegram.error import BadRequest, Forbidden, TelegramError
 from telegram.ext import ContextTypes
@@ -126,20 +127,45 @@ async def _is_member(bot, group_id: int, user_id: int) -> bool:
 # --------------------------------------------------------------------- #
 # Parseo
 # --------------------------------------------------------------------- #
-def _parse_usernames(text: str) -> tuple[list[str], list[str]]:
-    """(válidos sin repetir, inválidos). El @ es opcional."""
-    good: list[str] = []
-    bad: list[str] = []
-    for token in re.split(r"[\s,;]+", text.strip()):
-        if not token:
-            continue
-        name = token.lstrip("@")
-        if _USERNAME_RE.match(name):
-            if name.lower() not in good:
-                good.append(name.lower())
+def _norm(text: str) -> str:
+    """Clave para comparar/sumar votos: sin @, sin acentos, minúsculas, espacios simples."""
+    t = unicodedata.normalize("NFKD", text.strip().lstrip("@"))
+    t = "".join(c for c in t if not unicodedata.combining(c))
+    return " ".join(t.casefold().split())
+
+
+def _parse_options(text: str, max_choices: int) -> tuple[list[tuple[str, str]], str | None]:
+    """Convierte el mensaje del votante en [(clave, texto)]. Puede ser un
+    @usuario o cualquier texto (ej. «mejor pelea»). Con 2 votos por persona se
+    separan con coma, punto y coma o salto de línea (o espacios si son @usuarios).
+    Devuelve (opciones, error)."""
+    raw = text.strip()
+    ws = [t for t in re.split(r"[\s,;]+", raw) if t]
+    if len(ws) > 1 and all(t.startswith("@") for t in ws):
+        parts = ws
+    else:
+        parts = [p.strip() for p in re.split(r"[,;\n]+", raw) if p.strip()]
+    options: list[tuple[str, str]] = []
+    for part in parts:
+        if part.startswith("@"):
+            if not _USERNAME_RE.match(part[1:]):
+                return [], f"«{part}» no es un @usuario válido (5-32 caracteres, letras, números o _)."
+            label = "@" + part[1:].lower()
         else:
-            bad.append(token)
-    return good, bad
+            label = " ".join(part.split())
+        if len(label) > 60:
+            return [], "Ese voto es muy largo (máximo 60 caracteres)."
+        key = _norm(label)
+        if not key:
+            return [], "No entendí tu voto."
+        if all(k != key for k, _l in options):
+            options.append((key, label))
+    if not options:
+        return [], "No entendí tu voto."
+    if len(options) > max_choices:
+        return [], (f"En esta votación podés votar por {max_choices} "
+                    f"{'opción' if max_choices == 1 else 'opciones'} como máximo.")
+    return options, None
 
 
 def _parse_duration_secs(text: str) -> int | None:
@@ -160,8 +186,8 @@ def _duration_label(secs: int) -> str:
 def _announce_text(v) -> str:
     when = f"⏳ Cierra en {humanize_seconds(v['duration_secs'])}." if v["duration_secs"] else "🔒 Se cierra manualmente."
     n = v["max_choices"]
-    how = ("Podés votar por hasta 2 personas (mandá los 2 @usuario juntos)." if n == 2
-           else "Mandá el @usuario de la persona por la que votás.")
+    how = ("Podés votar por hasta 2 opciones (separadas por coma)." if n == 2
+           else "Mandá tu voto: un @usuario o el nombre de la opción.")
     return (f"🗳 <b>VOTACIÓN ABIERTA</b>\n\n<b>{_e(v['title'])}</b>\n\n{how}\n"
             f"{when}\nTocá el botón, abrí mi privado y mandame tu voto.")
 
@@ -230,7 +256,7 @@ async def _results_text(db: Database, v) -> str:
         pct = (votes / total * 100) if total else 0
         filled = round(pct / 10)
         crown = " 👑" if votes == top and v["status"] == "closed" else ""
-        lines.append(f"@{_e(name)}{crown}\n{'█' * filled}{'░' * (10 - filled)} {votes} ({pct:.0f}%)")
+        lines.append(f"{_e(name)}{crown}\n{'█' * filled}{'░' * (10 - filled)} {votes} ({pct:.0f}%)")
     if not counts:
         lines.append("Todavía nadie votó.")
     lines.append("")
@@ -238,9 +264,9 @@ async def _results_text(db: Database, v) -> str:
     if v["status"] == "closed" and top > 0:
         winners = [n for n, c in counts if c == top]
         if len(winners) == 1:
-            lines.append(f"🏆 Ganador: @{_e(winners[0])}")
+            lines.append(f"🏆 Ganador: {_e(winners[0])}")
         else:
-            lines.append("🤝 Empate entre: " + ", ".join(f"@{_e(w)}" for w in winners))
+            lines.append("🤝 Empate entre: " + ", ".join(_e(w) for w in winners))
     return "\n".join(lines)
 
 
@@ -443,50 +469,60 @@ async def _choices_markup(context, votaciones: list) -> InlineKeyboardMarkup:
 
 
 def _vote_prompt(v) -> str:
-    extra = ("\nPodés votar por <b>hasta 2 personas</b>: mandá los 2 @usuario en el mismo mensaje."
-             if v["max_choices"] == 2 else "")
-    return (f"🗳 <b>{_e(v['title'])}</b>\n\nEscribime el <b>@usuario</b> de la persona por la que votás "
-            f"(el @ es opcional).{extra}\nOjo: el voto no se puede cambiar. /cancelar para salir.")
+    extra = ("\nPodés votar por <b>hasta 2 opciones</b>: separalas con coma." if v["max_choices"] == 2 else "")
+    return (f"🗳 <b>{_e(v['title'])}</b>\n\nEscribime tu voto: un <b>@usuario</b> o el nombre de lo que "
+            f"querés votar (por ejemplo «mejor pelea»).{extra}\n"
+            "No podés votar por vos mismo. Ojo: el voto no se puede cambiar. /cancelar para salir.")
 
 
-async def _begin_voting(send, context, user_id: int, vid: int) -> None:
+async def _begin_voting(context, user_id: int, vid: int) -> None:
+    """Abre el voto en el privado (el chat privado tiene el mismo id que el usuario)."""
     db = _db(context)
     v = await db.get_votacion(vid)
+
+    async def say(text: str, **kw) -> None:
+        await context.bot.send_message(user_id, text, **kw)
+
     if v is None or v["status"] != "active":
-        await send("⚠️ Esa votación no está abierta (ya cerró o no existe).")
+        await say("⚠️ Esa votación no está abierta (ya cerró o no existe).")
         return
     if not await _is_member(context.bot, v["group_id"], user_id):
-        await send("⚠️ Tenés que ser miembro del grupo para votar.")
+        await say("⚠️ Tenés que ser miembro del grupo para votar.")
         return
     if await db.has_voted(vid, user_id):
-        await send("⚠️ Ya votaste en esta votación. Solo se permite un voto por persona.")
+        await say("⚠️ Ya votaste en esta votación. Solo se permite un voto por persona.")
         return
     context.user_data[_VOTING_KEY] = vid
-    await send(_vote_prompt(v), parse_mode="HTML")
+    if v["photo_file_id"]:
+        try:
+            await context.bot.send_photo(user_id, v["photo_file_id"], caption=_vote_prompt(v), parse_mode="HTML")
+            return
+        except TelegramError as exc:
+            logger.info("No pude mandar la foto de la votación #%s: %s", vid, exc)
+    await say(_vote_prompt(v), parse_mode="HTML")
 
 
-async def _cast(context, user_id: int, vid: int, text: str) -> tuple[str, bool]:
+async def _cast(context, user, vid: int, text: str) -> tuple[str, bool]:
     """Procesa un voto escrito. Devuelve (respuesta, terminó) — si terminó
     se limpia el estado de 'votando'; si no, la persona puede reintentar."""
     db = _db(context)
     v = await db.get_votacion(vid)
     if v is None or v["status"] != "active":
         return "⚠️ Esa votación ya no está abierta. Tu voto no se registró.", True
-    if await db.has_voted(vid, user_id):
+    if await db.has_voted(vid, user.id):
         return "⚠️ Ya votaste en esta votación. Solo se permite un voto por persona.", True
-    if not await _is_member(context.bot, v["group_id"], user_id):
+    if not await _is_member(context.bot, v["group_id"], user.id):
         return "⚠️ Tenés que ser miembro del grupo para votar.", True
-    good, bad = _parse_usernames(text)
-    if bad or not good:
-        return ("Mandame un @usuario válido (5-32 caracteres, letras, números o _)"
-                + (f". No entendí: {_e(', '.join(bad))}" if bad else "."), False)
-    if len(good) > v["max_choices"]:
-        return (f"En esta votación podés votar por {v['max_choices']} "
-                f"{'persona' if v['max_choices'] == 1 else 'personas'} como máximo. Mandame solo "
-                f"{v['max_choices']}."), False
-    if not await db.cast_ballot(vid, user_id, good):
+    options, error = _parse_options(text, v["max_choices"])
+    if error:
+        return _e(error), False
+    own = {_norm(user.username or ""), _norm(user.full_name or "")} - {""}
+    if any(key in own for key, _l in options):
+        return "🚫 No podés votar por vos mismo. Mandame otro voto.", False
+    if not await db.cast_ballot(vid, user.id, options):
         return "⚠️ Ya votaste en esta votación. Solo se permite un voto por persona.", True
-    return (f"✅ ¡Voto registrado para {', '.join('@' + _e(n) for n in good)} en «{_e(v['title'])}»!"), True
+    shown = ", ".join(_e(label) for _k, label in options)
+    return f"✅ ¡Voto registrado para {shown} en «{_e(v['title'])}»!", True
 
 
 async def try_consume_votacion_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -505,7 +541,7 @@ async def try_consume_votacion_input(update: Update, context: ContextTypes.DEFAU
 
     vid = context.user_data.get(_VOTING_KEY)
     if vid:
-        reply, done = await _cast(context, user.id, vid, text)
+        reply, done = await _cast(context, user, vid, text)
         if done:
             context.user_data.pop(_VOTING_KEY, None)
         await message.reply_text(reply, parse_mode="HTML")
@@ -518,7 +554,7 @@ async def try_consume_votacion_input(update: Update, context: ContextTypes.DEFAU
     if not eligible:
         return False
     if len(eligible) == 1:
-        reply, _ = await _cast(context, user.id, eligible[0]["id"], text)
+        reply, _ = await _cast(context, user, eligible[0]["id"], text)
         await message.reply_text(reply, parse_mode="HTML")
         return True
     context.user_data[_PENDING_TEXT_KEY] = text
@@ -538,7 +574,7 @@ async def handle_votacion_start_deeplink(update: Update, context: ContextTypes.D
     kind, num = m.group(1), int(m.group(2))
     message, user = update.effective_message, update.effective_user
     if kind == "vote":
-        await _begin_voting(message.reply_text, context, user.id, num)
+        await _begin_voting(context, user.id, num)
         return True
     if kind == "votar":  # botón del cartel del grupo
         eligible = await _eligible(context, user.id, num)
@@ -546,7 +582,7 @@ async def handle_votacion_start_deeplink(update: Update, context: ContextTypes.D
             await message.reply_text("No tenés votaciones abiertas para votar en ese grupo "
                                      "(o ya votaste en todas, o no sos miembro).")
         elif len(eligible) == 1:
-            await _begin_voting(message.reply_text, context, user.id, eligible[0]["id"])
+            await _begin_voting(context, user.id, eligible[0]["id"])
         else:
             await message.reply_text("Hay varias votaciones abiertas. Elegí una:",
                                      reply_markup=await _choices_markup(context, eligible))
@@ -603,6 +639,20 @@ async def _launch_all(context, gid: int) -> tuple[int, str | None]:
             launched.append(x["id"])
     if not launched:
         return 0, "No hay votaciones en borrador para lanzar."
+    # Las votaciones con foto se publican primero (álbum o foto suelta, con su
+    # título), y después el mensaje único con el botón «Votar».
+    with_photo = [v for v in (await db.get_votacion(i) for i in launched) if v["photo_file_id"]]
+    for k in range(0, len(with_photo), 10):
+        chunk = with_photo[k:k + 10]
+        try:
+            if len(chunk) == 1:
+                await context.bot.send_photo(gid, chunk[0]["photo_file_id"],
+                                             caption=f"🗳 <b>{_e(chunk[0]['title'])}</b>", parse_mode="HTML")
+            else:
+                await context.bot.send_media_group(gid, [
+                    InputMediaPhoto(v["photo_file_id"], caption=f"🗳 {v['title']}"[:1024]) for v in chunk])
+        except TelegramError as exc:
+            logger.warning("No pude publicar las fotos de las votaciones en %s: %s", gid, exc)
     title = await db.get_group_title(gid) or "del grupo"
     text = (f"🗳 <b>Las votaciones del grupo {_e(title)} han empezado</b>\n\n"
             "Tocá el botón, abrí mi privado y elegí en cuál querés votar.")
@@ -701,12 +751,10 @@ async def votaciones_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if action == "pick" and arg is not None:
         pending_text = context.user_data.pop(_PENDING_TEXT_KEY, None)
         if pending_text:
-            reply, _ = await _cast(context, user.id, arg, pending_text)
+            reply, _ = await _cast(context, user, arg, pending_text)
             await _edit(query, reply)
         else:
-            async def send(text, **kw):
-                await query.message.reply_text(text, **kw)
-            await _begin_voting(send, context, user.id, arg)
+            await _begin_voting(context, user.id, arg)
         await query.answer()
         return
 

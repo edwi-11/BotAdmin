@@ -549,7 +549,8 @@ CREATE TABLE IF NOT EXISTS votacion_ballots (
 CREATE TABLE IF NOT EXISTS votacion_choices (
     votacion_id   INTEGER NOT NULL,
     voter_id      INTEGER NOT NULL,
-    username      TEXT NOT NULL,
+    username      TEXT NOT NULL,   -- clave normalizada (minúsculas, sin acentos ni @)
+    label         TEXT,            -- texto tal como lo escribió la persona
     PRIMARY KEY (votacion_id, voter_id, username)
 );
 CREATE INDEX IF NOT EXISTS idx_votacion_choices ON votacion_choices (votacion_id, username);
@@ -559,6 +560,9 @@ CREATE INDEX IF NOT EXISTS idx_votacion_choices ON votacion_choices (votacion_id
 # Se agregan en caliente con ALTER TABLE para no romper bases de datos
 # ya existentes que fueron creadas antes de que estas columnas existieran.
 _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
+    "votacion_choices": [
+        ("label", "TEXT"),
+    ],
     "votaciones": [
         ("photo_file_id", "TEXT"),
         ("max_choices", "INTEGER NOT NULL DEFAULT 1"),
@@ -2848,18 +2852,20 @@ class Database:
         )
         return await cursor.fetchone() is not None
 
-    async def cast_ballot(self, vid: int, voter_id: int, usernames: list[str]) -> bool:
-        """Guarda la papeleta completa (1 o más @usuario). False si esa
-        persona ya había votado en esta votación."""
+    async def cast_ballot(self, vid: int, voter_id: int, options: list[tuple[str, str]]) -> bool:
+        """Guarda la papeleta completa. options = [(clave_normalizada, texto)].
+        Puede ser un @usuario o cualquier texto (ej. "mejor pelea"). False si
+        esa persona ya había votado en esta votación."""
         try:
             await self.conn.execute(
                 "INSERT INTO votacion_ballots (votacion_id, voter_id, voted_at) VALUES (?, ?, ?)",
                 (vid, voter_id, int(time.time())),
             )
-            for name in usernames:
+            for key, label in options:
                 await self.conn.execute(
-                    "INSERT OR IGNORE INTO votacion_choices (votacion_id, voter_id, username) VALUES (?, ?, ?)",
-                    (vid, voter_id, name.lower()),
+                    "INSERT OR IGNORE INTO votacion_choices (votacion_id, voter_id, username, label) "
+                    "VALUES (?, ?, ?, ?)",
+                    (vid, voter_id, key, label),
                 )
             await self.conn.commit()
             return True
@@ -2868,12 +2874,14 @@ class Database:
             return False
 
     async def get_votacion_counts(self, vid: int) -> list[tuple[str, int]]:
-        """Cuántas veces se mandó cada @usuario, de mayor a menor."""
+        """(texto a mostrar, veces que se votó), de mayor a menor. Los votos
+        iguales (sin importar mayúsculas/acentos/@) se suman juntos."""
         cursor = await self.conn.execute(
-            "SELECT username, COUNT(*) AS votes FROM votacion_choices WHERE votacion_id = ? "
+            "SELECT COALESCE(MIN(label), '@' || username) AS shown, COUNT(*) AS votes "
+            "FROM votacion_choices WHERE votacion_id = ? "
             "GROUP BY username ORDER BY votes DESC, username", (vid,),
         )
-        return [(r["username"], r["votes"]) for r in await cursor.fetchall()]
+        return [(r["shown"], r["votes"]) for r in await cursor.fetchall()]
 
     async def count_votacion_voters(self, vid: int) -> int:
         cursor = await self.conn.execute(
