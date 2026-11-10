@@ -69,6 +69,7 @@ from handlers.free import free_command, freelist_command, unfree_command
 from handlers.gemini_chat import ceo_trigger, resumen_command
 from handlers.kang import kang_command
 from handlers.wa_stickers import wasticker_command
+from handlers.emoji import register_emoji_handlers
 from handlers.horoscopo import horoscopo_command, try_consume_pending_birthdate
 from handlers.menu import menu_callback, menu_command, try_consume_pending_input
 from utils.message_log import track_message
@@ -190,6 +191,8 @@ BOT_COMMANDS = [
     BotCommand("npin", "Fijar el mensaje respondido (con notificación)"),
     BotCommand("send", "Enviar un mensaje o reenviar contenido como el bot"),
     BotCommand("q", "Citar el mensaje respondido como sticker"),
+    BotCommand("emoji", "Convertir una foto/video/GIF en emoji personalizado"),
+    BotCommand("emojis", "Convertir un pack de stickers en emojis personalizados"),
     BotCommand("free", "Eximir a un usuario de los filtros del grupo"),
     BotCommand("unfree", "Quitarle la exención a un usuario"),
     BotCommand("freelist", "Ver usuarios liberados en este grupo"),
@@ -631,6 +634,9 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("salirgrupo", salirgrupo_command))
     application.add_handler(CommandHandler(["kang", "steal"], kang_command))
     application.add_handler(CommandHandler(["wasticker", "towa"], wasticker_command))
+    # /emoji (también en pie de foto) y /emojis -> handlers/emoji.py.
+    # Va antes del router de mensajes libres (más abajo) a propósito.
+    register_emoji_handlers(application)
     application.add_handler(CommandHandler("owner", owner_command))
     application.add_handler(CommandHandler("ready", ready_command))
     application.add_handler(CallbackQueryHandler(owner_select_callback, pattern=r"^remote:"))
