@@ -334,7 +334,7 @@ async def _fuente_a_input_sticker(bot, fuente: Fuente, emojis: list[str], carpet
         datos = entrada.read_bytes()
 
     entrada.unlink(missing_ok=True)  # liberamos disco apenas se puede
-    archivo = InputFile(datos, filename=f"emoji_{indice}.{_EXTENSION[fmt]}")
+    archivo = InputFile(datos, filename=f"emoji_{indice}.{_EXTENSION[fmt]}", attach=True)
     return InputSticker(sticker=archivo, emoji_list=emojis, format=_FORMATO_TELEGRAM[fmt]), fmt
 
 
