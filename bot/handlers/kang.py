@@ -26,6 +26,7 @@ Uso:
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 
@@ -105,12 +106,12 @@ async def _get_source(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if replied.photo:
         file = await context.bot.get_file(replied.photo[-1].file_id)
         raw = bytes(await file.download_as_bytearray())
-        return "static", _convert_to_sticker_bytes(raw), False, None
+        return "static", await asyncio.to_thread(_convert_to_sticker_bytes, raw), False, None
 
     if replied.document and (replied.document.mime_type or "").startswith("image/"):
         file = await context.bot.get_file(replied.document.file_id)
         raw = bytes(await file.download_as_bytearray())
-        return "static", _convert_to_sticker_bytes(raw), False, None
+        return "static", await asyncio.to_thread(_convert_to_sticker_bytes, raw), False, None
 
     return "unsupported", None, False, None
 

@@ -193,7 +193,7 @@ async def _ask_groq(prompt: str, history: list[dict[str, str]] | None = None) ->
         raise GeminiError("Respuesta vacía o bloqueada por Groq") from exc
 
 
-async def _ask_ai(prompt: str, history: list[dict[str, str]] | None = None) -> str:
+async def _ask_ai_inner(prompt: str, history: list[dict[str, str]] | None = None) -> str:
     """Intenta responder con Gemini primero. Si falla por CUALQUIER motivo
     (cuota agotada, error de red, respuesta bloqueada, etc.), o si Gemini
     ni siquiera está configurado, y hay una GROQ_API_KEY configurada,
@@ -213,6 +213,24 @@ async def _ask_ai(prompt: str, history: list[dict[str, str]] | None = None) -> s
         except Exception as groq_exc:  # noqa: BLE001
             logger.warning("El respaldo de Groq también falló: %s", groq_exc)
             raise groq_exc from gemini_exc
+
+
+# Máximo 5 consultas a la IA a la vez y 25 s de tope por consulta, para que
+# una IA lenta o caída no acumule tareas ni deje al bot esperando.
+_AI_SEM = asyncio.Semaphore(5)
+_AI_TIMEOUT = 25
+
+
+async def _ask_ai(prompt: str, history: list[dict[str, str]] | None = None) -> str:
+    async with _AI_SEM:
+        try:
+            return await asyncio.wait_for(
+                _ask_ai_inner(prompt, history),
+                timeout=_AI_TIMEOUT,
+            )
+        except asyncio.TimeoutError as exc:
+            logger.warning("La IA tardó más de %s s en responder; consulta cancelada.", _AI_TIMEOUT)
+            raise GeminiError("La IA tardó demasiado en responder (timeout).") from exc
 
 
 # --------------------------------------------------------------------- #

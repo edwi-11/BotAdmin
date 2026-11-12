@@ -44,6 +44,7 @@ si el pack tiene alguna, se las salta y avisa cuántas quedaron afuera.
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import zipfile
@@ -162,7 +163,7 @@ async def wasticker_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     try:
         icon_file = await context.bot.get_file(static_candidates[0].file_id)
         icon_raw = bytes(await icon_file.download_as_bytearray())
-        icon_png = _make_icon(icon_raw)
+        icon_png = await asyncio.to_thread(_make_icon, icon_raw)
     except TelegramError as exc:
         await status.edit_text(f"⚠️ No pude descargar el ícono del pack: {exc}")
         return
@@ -172,7 +173,7 @@ async def wasticker_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         try:
             f = await context.bot.get_file(s.file_id)
             raw = bytes(await f.download_as_bytearray())
-            webp_stickers.append(_to_square_512(raw))
+            webp_stickers.append(await asyncio.to_thread(_to_square_512, raw))
         except TelegramError as exc:
             logger.info("No pude convertir un sticker de %s: %s", sticker.set_name, exc)
 
@@ -187,7 +188,7 @@ async def wasticker_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     for idx, chunk in enumerate(chunks, start=1):
         suffix = f"-{idx}" if len(chunks) > 1 else ""
         file_title = f"{title}{suffix}"[:64]
-        data = _build_wastickers_file(file_title, author, icon_png, chunk)
+        data = await asyncio.to_thread(_build_wastickers_file, file_title, author, icon_png, chunk)
         caption = f"📦 {file_title} ({len(chunk)} figuritas)"
         if idx == 1:
             caption += (

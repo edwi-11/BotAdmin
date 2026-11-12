@@ -96,6 +96,7 @@ _PATRON_CAPTION = re.compile(r"^/emoji(?:@(\w+))?(?:\s|$)", re.IGNORECASE)
 _locks_usuario: dict[int, asyncio.Lock] = {}      # serializa los /emoji de cada usuario
 _pendientes_emoji: dict[int, int] = {}            # cuántos /emoji tiene en cola cada usuario
 _packs_en_curso: set[int] = set()                 # usuarios con un /emojis corriendo ahora
+_en_curso: set[int] = set()                       # chats con un /emoji o /emojis corriendo ahora (un bloqueo por chat)
 _tareas_segundo_plano: set[asyncio.Task] = set()  # referencias fuertes para que no las borre el GC
 
 
@@ -433,6 +434,7 @@ async def _tarea_emoji(context: ContextTypes.DEFAULT_TYPE, user, fuente: Fuente,
         logger.exception("Error inesperado en /emoji (usuario %s)", user.id)
         await _editar(estado, "⚠️ Ocurrió un error inesperado al convertir. Probá de nuevo en un rato.")
     finally:
+        _en_curso.discard(estado.chat_id)  # libera el bloqueo del chat SIEMPRE
         restantes = _pendientes_emoji.get(user.id, 1) - 1
         if restantes <= 0:
             _pendientes_emoji.pop(user.id, None)
@@ -451,15 +453,21 @@ def _lanzar(context: ContextTypes.DEFAULT_TYPE, corrutina: Awaitable[Any], updat
 async def _iniciar_emoji(update: Update, context: ContextTypes.DEFAULT_TYPE,
                          fuente: Fuente, argumentos: list[str]) -> None:
     message, user = update.effective_message, update.effective_user
+    chat_id = message.chat_id
 
+    if chat_id in _en_curso:
+        await message.reply_text("⏳ Ya hay una conversión en curso en este chat. Esperá a que termine.")
+        return
     if _pendientes_emoji.get(user.id, 0) >= MAX_PENDIENTES_EMOJI:
         await message.reply_text("⏳ Ya tenés varias conversiones en curso. Esperá a que terminen y probá de nuevo.")
         return
+    _en_curso.add(chat_id)  # se reserva el chat ANTES de cualquier await
     _pendientes_emoji[user.id] = _pendientes_emoji.get(user.id, 0) + 1
 
     try:
         estado = await message.reply_text("⏳ Convirtiendo a emoji…")
-    except TelegramError:
+    except BaseException:
+        _en_curso.discard(chat_id)
         _pendientes_emoji[user.id] = max(_pendientes_emoji.get(user.id, 1) - 1, 0)
         raise
     _lanzar(context, _tarea_emoji(context, user, fuente, _extraer_emojis(argumentos), estado), update)
@@ -647,6 +655,7 @@ async def _tarea_emojis(context: ContextTypes.DEFAULT_TYPE, user, nombre_set_ori
         await _editar(estado, "⚠️ Ocurrió un error inesperado al convertir el pack. Probá de nuevo en un rato.")
     finally:
         _packs_en_curso.discard(user.id)  # libera el cupo del usuario SIEMPRE
+        _en_curso.discard(estado.chat_id)  # libera el bloqueo del chat SIEMPRE
 
 
 async def emojis_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -664,6 +673,10 @@ async def emojis_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     # --- Límites anti-abuso ---
+    chat_id = message.chat_id
+    if chat_id in _en_curso:
+        await message.reply_text("⏳ Ya hay una conversión en curso en este chat. Esperá a que termine.")
+        return
     if user.id in _packs_en_curso:
         await message.reply_text("⏳ Ya tenés una conversión de pack en curso. Esperá a que termine.")
         return
@@ -671,11 +684,13 @@ async def emojis_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await message.reply_text("⏳ Hay muchas conversiones de packs en este momento. Probá de nuevo en un minuto.")
         return
 
+    _en_curso.add(chat_id)  # se reserva el chat ANTES de cualquier await
     _packs_en_curso.add(user.id)  # se reserva el cupo ANTES de cualquier await
     try:
         estado = await message.reply_text("⏳ Preparando la conversión…")
-    except TelegramError:
+    except BaseException:
         _packs_en_curso.discard(user.id)
+        _en_curso.discard(chat_id)
         raise
     _lanzar(context, _tarea_emojis(context, user, replied.sticker.set_name, estado), update)
 
@@ -688,12 +703,13 @@ def register_emoji_handlers(application: Application) -> None:
     IMPORTANTE: debe llamarse ANTES de registrar el router de mensajes
     libres (on_message_router), porque en un mismo grupo solo corre el
     primer handler que coincide."""
-    application.add_handler(CommandHandler("emoji", emoji_command))
-    application.add_handler(CommandHandler("emojis", emojis_command))
+    application.add_handler(CommandHandler("emoji", emoji_command, block=False))
+    application.add_handler(CommandHandler("emojis", emojis_command, block=False))
     application.add_handler(
         MessageHandler(
             filters.CaptionRegex(_PATRON_CAPTION)
             & (filters.PHOTO | filters.VIDEO | filters.ANIMATION | filters.Document.ALL),
             emoji_caption_handler,
+            block=False,
         )
     )

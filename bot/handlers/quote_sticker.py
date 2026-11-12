@@ -64,6 +64,7 @@ imagen (ver utils/telegram_media.py) la primera vez que aparecen.
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import random
@@ -1124,10 +1125,13 @@ async def q_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         unicode_images = {}
 
     try:
-        card = _render_quote_card(
-            rows, bg, rounded=not as_image, reply_preview=None, unicode_images=unicode_images
-        )
-        buf = _to_bytes(card, as_webp=not as_image)
+        def _render_sync() -> io.BytesIO:
+            card = _render_quote_card(
+                rows, bg, rounded=not as_image, reply_preview=None, unicode_images=unicode_images
+            )
+            return _to_bytes(card, as_webp=not as_image)
+
+        buf = await asyncio.to_thread(_render_sync)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Error generando la tarjeta de cita: %s", exc)
         await message.reply_text(error("No pude generar la cita, intenta de nuevo."))

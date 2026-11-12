@@ -538,6 +538,7 @@ def build_application() -> Application:
     application = (
         ApplicationBuilder()
         .token(settings.bot_token)
+        .concurrent_updates(True)
         .defaults(
             # allow_sending_without_reply=True: si un handler responde a un
             # mensaje que ya no existe en ESE chat (se borró, o — como en
@@ -806,7 +807,7 @@ def build_application() -> Application:
     # --- Integración con Gemini: mensajes que empiezan con "ceo" (cualquier
     # combinación de mayúsc/minúsc), solo en grupos activados ---
     application.add_handler(
-        MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, ceo_trigger),
+        MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, ceo_trigger, block=False),
         group=2,
     )
 

@@ -67,6 +67,7 @@ PAGE_GRP = 8
 CB_BOT_DATA = "anuncios_db"
 
 _inflight: set[tuple[int, int]] = set()   # (anuncio, grupo) con envío por mensajes en curso
+_en_curso: set[int] = set()               # chats con un envío manual/inmediato en curso (un bloqueo por chat)
 _pin_warned: set[tuple[int, int]] = set()  # para no avisar mil veces el mismo fallo de fijado
 _seen_groups: set[int] = set()  # grupos ya registrados en esta ejecución (evita un INSERT por mensaje)
 _send_lock = asyncio.Lock()
@@ -823,6 +824,8 @@ async def _run_and_report(app: Application, aid: int, ids: list[int], chat_id: i
     except Exception:
         logger.exception("Error en envío manual")
         text = "⚠️ Ocurrió un error durante el envío. Revisa los logs."
+    finally:
+        _en_curso.discard(chat_id)  # libera el bloqueo del chat SIEMPRE
     try:
         kb = Kb([nav(back)]) if back else Kb([[Btn("❌ Cerrar", callback_data="an:x")]])
         await app.bot.edit_message_text(text, chat_id=chat_id, message_id=msg_id, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -866,9 +869,17 @@ async def anuncios_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return await _show(q, t, kb)
     if cmd == "q":
         aid, cid = int(p[2]), int(p[3])
-        await q.answer("Enviando…")
-        await q.edit_message_text("⏳ Enviando…")
-        context.application.create_task(_run_and_report(context.application, aid, [cid], msg.chat_id, msg.message_id, None, q.from_user.id))
+        if msg.chat_id in _en_curso:
+            await q.answer("Ya hay un envío en curso en este chat.", show_alert=True)
+            return
+        _en_curso.add(msg.chat_id)  # se reserva el chat ANTES de cualquier await
+        try:
+            await q.answer("Enviando…")
+            await q.edit_message_text("⏳ Enviando…")
+            context.application.create_task(_run_and_report(context.application, aid, [cid], msg.chat_id, msg.message_id, None, q.from_user.id))
+        except BaseException:
+            _en_curso.discard(msg.chat_id)
+            raise
         return
 
     await q.answer()
@@ -969,10 +980,18 @@ async def anuncios_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         if not ids:
             await q.answer("No hay grupos destino (o la selección expiró).", show_alert=True)
             return
-        ud.pop("anc_tgt", None)
-        await _show(q, f"⏳ Enviando #{aid} a {len(ids)} grupo(s)…", Kb([[Btn("❌ Cerrar", callback_data="an:x")]]))
-        back = f"an:a:{aid}" if ctx == "d" else "an:e:0"
-        context.application.create_task(_run_and_report(context.application, aid, list(ids), msg.chat_id, msg.message_id, back, q.from_user.id))
+        if msg.chat_id in _en_curso:
+            await q.answer("Ya hay un envío en curso en este chat.", show_alert=True)
+            return
+        _en_curso.add(msg.chat_id)  # se reserva el chat ANTES de cualquier await
+        try:
+            ud.pop("anc_tgt", None)
+            await _show(q, f"⏳ Enviando #{aid} a {len(ids)} grupo(s)…", Kb([[Btn("❌ Cerrar", callback_data="an:x")]]))
+            back = f"an:a:{aid}" if ctx == "d" else "an:e:0"
+            context.application.create_task(_run_and_report(context.application, aid, list(ids), msg.chat_id, msg.message_id, back, q.from_user.id))
+        except BaseException:
+            _en_curso.discard(msg.chat_id)
+            raise
         return
     elif cmd == "g":
         t, kb = await scr_groups(adb, int(p[2]))
@@ -1127,5 +1146,5 @@ def register_anuncios_handlers(application: Application) -> None:
         MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, anuncios_text_input), group=-18
     )
     application.add_handler(CommandHandler("anuncios", anuncios_command), group=-17)
-    application.add_handler(CommandHandler("enviar", enviar_command), group=-17)
-    application.add_handler(CallbackQueryHandler(anuncios_callback, pattern=r"^an:"), group=-17)
+    application.add_handler(CommandHandler("enviar", enviar_command, block=False), group=-17)
+    application.add_handler(CallbackQueryHandler(anuncios_callback, pattern=r"^an:", block=False), group=-17)
