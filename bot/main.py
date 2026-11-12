@@ -45,6 +45,7 @@ from handlers.activation import (
 )
 from handlers.admin import admin_command, permiso_command, quitarpermiso_command, unadmin_command
 from handlers.activity_ranking import ranking_callback, top_command
+from handlers.anuncios import close_anuncios, init_anuncios, register_anuncios_handlers
 from utils.activity_stats import schedule_activity_resets, track_activity
 from utils.weekly_summary import count_new_members, schedule_weekly_summary
 from handlers.afk import brb_text_trigger, load_afk_cache, track_and_check_afk, unbrb_text_trigger
@@ -429,10 +430,12 @@ async def post_init(application: Application) -> None:
     schedule_activity_resets(application)
     schedule_weekly_summary(application)
     schedule_votaciones(application)
+    await init_anuncios(application)
     logger.info("Bot inicializado correctamente. Propietarios: %s", list(settings.owner_ids))
 
 
 async def post_shutdown(application: Application) -> None:
+    await close_anuncios(application)
     db: Database | None = application.bot_data.get("db")
     if db is not None:
         await db.close()
@@ -806,6 +809,9 @@ def build_application() -> Application:
         MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, ceo_trigger),
         group=2,
     )
+
+    # --- Sistema de anuncios (handlers/anuncios.py + anuncios_db.py) ---
+    register_anuncios_handlers(application)
 
     application.add_error_handler(error_handler)
     return application
