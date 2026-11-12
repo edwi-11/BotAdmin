@@ -206,6 +206,19 @@ class AnunciosDB:
             )
             await self.conn.commit()
 
+    async def all_group_ids(self) -> list[int]:
+        rows = await self._all("SELECT chat_id FROM anc_grupos")
+        return [r["chat_id"] for r in rows]
+
+    async def delete_group(self, chat_id: int) -> None:
+        async with self._lock:
+            await self.conn.execute("DELETE FROM anc_grupos WHERE chat_id=?", (chat_id,))
+            await self.conn.execute("DELETE FROM anc_counters WHERE chat_id=?", (chat_id,))
+            await self.conn.commit()
+
+    async def update_group(self, chat_id: int, title: str, active: int) -> None:
+        await self._run("UPDATE anc_grupos SET title=?, active=? WHERE chat_id=?", (title or str(chat_id), active, chat_id))
+
     async def get_group(self, chat_id: int) -> Optional[dict[str, Any]]:
         return await self._one("SELECT * FROM anc_grupos WHERE chat_id=?", (chat_id,))
 

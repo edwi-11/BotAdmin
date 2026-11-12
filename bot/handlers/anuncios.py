@@ -324,6 +324,83 @@ def fmt_result(aid: int, res: dict) -> str:
     return t
 
 
+_purging = False
+_BAD = ("chat not found", "deactivated", "peer_id_invalid", "chat_id_invalid", "invalid", "not a member", "kicked")
+
+
+async def depurar_grupos(bot, adb: AnunciosDB) -> dict[str, int]:
+    """Elimina ids duplicados (grupo viejo vs supergrupo), ids que no son grupos
+    (positivos = usuarios) y grupos que ya no existen o donde el bot ya no está."""
+    res = {"revisados": 0, "dup": 0, "invalidos": 0, "inactivos": 0, "sin_verificar": 0, "quedan": 0}
+    ids = await adb.all_group_ids()
+    idset = set(ids)
+    me = (await bot.get_me()).id
+    for gid in ids:
+        res["revisados"] += 1
+        if gid >= 0:  # ids positivos son usuarios, nunca grupos
+            await adb.delete_group(gid)
+            res["invalidos"] += 1
+            continue
+        if not str(gid).startswith("-100") and int("-100" + str(-gid)) in idset:
+            await adb.delete_group(gid)  # duplicado: ya existe como supergrupo
+            res["dup"] += 1
+            continue
+        try:
+            cm = await _retry(bot.get_chat_member, gid, me)
+            if cm.status in (ChatMemberStatus.LEFT, ChatMemberStatus.BANNED):
+                await adb.delete_group(gid)
+                res["invalidos"] += 1
+            else:
+                chat = await _retry(bot.get_chat, gid)
+                if chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
+                    await adb.delete_group(gid)
+                    res["invalidos"] += 1
+                else:
+                    can = not (cm.status == ChatMemberStatus.RESTRICTED and not getattr(cm, "can_send_messages", True))
+                    await adb.update_group(gid, chat.title or str(gid), 1 if can else 0)
+                    if not can:
+                        res["inactivos"] += 1
+        except ChatMigrated as e:
+            await adb.delete_group(gid)
+            await adb.ensure_group(e.new_chat_id, "")
+            idset.add(e.new_chat_id)
+            res["dup"] += 1
+        except Forbidden:
+            await adb.delete_group(gid)
+            res["invalidos"] += 1
+        except BadRequest as e:
+            if any(k in str(e).lower() for k in _BAD):
+                await adb.delete_group(gid)
+                res["invalidos"] += 1
+            else:
+                res["sin_verificar"] += 1
+        except TelegramError:
+            res["sin_verificar"] += 1
+        await asyncio.sleep(PAUSE_BETWEEN_GROUPS)
+    res["quedan"] = (await adb.group_counts())["total"]
+    return res
+
+
+async def _purge_and_report(app: Application, chat_id: int, msg_id: int) -> None:
+    global _purging
+    try:
+        r = await depurar_grupos(app.bot, _adb(app))
+        text = (f"🧹 <b>Depuración terminada</b>\nRevisados: {r['revisados']}\n"
+                f"Duplicados eliminados: {r['dup']}\nIds inválidos/inexistentes eliminados: {r['invalidos']}\n"
+                f"Sin poder escribir (inactivos): {r['inactivos']}\nNo verificados (error temporal): {r['sin_verificar']}\n"
+                f"<b>Grupos que quedan: {r['quedan']}</b>")
+    except Exception:
+        logger.exception("Error depurando grupos")
+        text = "⚠️ Ocurrió un error durante la depuración. Revisa los logs."
+    finally:
+        _purging = False
+    try:
+        await app.bot.edit_message_text(text, chat_id=chat_id, message_id=msg_id,
+                                        reply_markup=Kb([nav("an:g:0")]), parse_mode=ParseMode.HTML)
+    except TelegramError:
+        pass
+
+
 # ----------------------------------------------------------------------------
 # Planificador (tick) y modo por mensajes
 # ----------------------------------------------------------------------------
@@ -528,7 +605,8 @@ async def scr_groups(adb: AnunciosDB, page: int):
     gs = await adb.list_groups(page * PAGE_GRP, PAGE_GRP)
     t = (f"👥 <b>Grupos</b> ({gc['act']} activos, {gc['total'] - gc['act']} inactivos)\n"
          "✅/⬜ = recibe anuncios programados · 🚫 = lista negra (nunca recibe nada)")
-    rows = [[Btn("✅ Seleccionar todos", callback_data="an:ga:1"), Btn("⬜ Quitar todos", callback_data="an:ga:0")]]
+    rows = [[Btn("✅ Seleccionar todos", callback_data="an:ga:1"), Btn("⬜ Quitar todos", callback_data="an:ga:0")],
+            [Btn("🧹 Depurar grupos (duplicados / ids falsos)", callback_data="an:gc")]]
     for g in gs:
         rows.append([
             Btn(f"{chk(g['selected'])} {short(g['title'], 22)}", callback_data=f"an:gt:{g['chat_id']}:{page}"),
@@ -871,6 +949,16 @@ async def anuncios_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     elif cmd == "ga":
         await adb.set_all_selected(int(p[2]))
         t, kb = await scr_groups(adb, 0)
+    elif cmd == "gc":
+        global _purging
+        if _purging:
+            await q.answer("Ya hay una depuración en curso", show_alert=True)
+            return
+        _purging = True
+        await _show(q, "🧹 Depurando grupos… puede tardar unos minutos (verifico cada uno con Telegram). Te aviso aquí al terminar.",
+                    Kb([[Btn("❌ Cerrar", callback_data="an:x")]]))
+        context.application.create_task(_purge_and_report(context.application, msg.chat_id, msg.message_id))
+        return
     elif cmd == "s":
         t, kb = await scr_settings(adb)
     elif cmd == "sq":
@@ -969,9 +1057,11 @@ async def init_anuncios(application: Application) -> None:
     application.bot_data[CB_BOT_DATA] = adb
     try:  # siembra de grupos que el bot de moderación ya conocía (solo lectura)
         main_db = application.bot_data.get("db")
-        if main_db is not None:
+        if main_db is not None and await adb.get_setting("seeded", "0") != "1":
             for gid, title in await main_db.get_known_groups():
-                await adb.ensure_group(gid, title)
+                if gid < 0:
+                    await adb.ensure_group(gid, title)
+            await adb.set_setting("seeded", "1")  # una sola vez: así lo depurado no reaparece
     except Exception:
         logger.exception("No se pudieron sembrar los grupos conocidos")
     if application.job_queue is not None:
