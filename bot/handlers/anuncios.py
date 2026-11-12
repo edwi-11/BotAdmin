@@ -169,6 +169,12 @@ async def on_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if m is None:
         return
     try:
+        if m.chat_id != CHANNEL_ID:  # canal distinto al configurado: lo anotamos para diagnosticar
+            logger.warning("Publicación de canal %s (%s) ignorada: ANUNCIOS_CHANNEL_ID es %s",
+                           m.chat_id, getattr(m.chat, "title", ""), CHANNEL_ID or "(vacío)")
+            await _adb(context.application).set_setting(
+                "foreign_chan", f"{m.chat_id}|{getattr(m.chat, 'title', '') or ''}")
+            return
         tipo = _tipo(m)
         prev = short((m.text or m.caption or ""), 60) or f"[{tipo}]"
         await _adb(context.application).upsert_anuncio(
@@ -328,49 +334,66 @@ _purging = False
 _BAD = ("chat not found", "deactivated", "peer_id_invalid", "chat_id_invalid", "invalid", "not a member", "kicked")
 
 
-async def depurar_grupos(bot, adb: AnunciosDB) -> dict[str, int]:
+async def depurar_grupos(bot, adb: AnunciosDB, main_db=None) -> dict[str, int]:
     """Elimina ids duplicados (grupo viejo vs supergrupo), ids que no son grupos
     (positivos = usuarios) y grupos que ya no existen o donde el bot ya no está."""
-    res = {"revisados": 0, "dup": 0, "invalidos": 0, "inactivos": 0, "sin_verificar": 0, "quedan": 0}
-    ids = await adb.all_group_ids()
+    res: dict[str, int] = {"quedan_menu": -1, "revisados": 0, "dup": 0, "invalidos": 0, "inactivos": 0, "sin_verificar": 0, "quedan": 0}
+    ids_known: list[int] = []
+    if main_db is not None:  # lista que usan /grupos, /menu y el bot de broadcast
+        try:
+            ids_known = [g for g, _ in await main_db.get_known_groups()]
+        except Exception:
+            logger.exception("No se pudo leer known_groups")
+    known_set = set(ids_known)
+    ids = sorted(set(await adb.all_group_ids()) | known_set)
     idset = set(ids)
     me = (await bot.get_me()).id
+
+    async def _borrar(gid: int) -> None:
+        await adb.delete_group(gid)
+        if main_db is not None and gid in known_set:
+            try:
+                await main_db.remove_group(gid)
+            except Exception:
+                logger.exception("No se pudo quitar %s de known_groups", gid)
+
     for gid in ids:
         res["revisados"] += 1
         if gid >= 0:  # ids positivos son usuarios, nunca grupos
-            await adb.delete_group(gid)
+            await _borrar(gid)
             res["invalidos"] += 1
             continue
         if not str(gid).startswith("-100") and int("-100" + str(-gid)) in idset:
-            await adb.delete_group(gid)  # duplicado: ya existe como supergrupo
+            await _borrar(gid)  # duplicado: ya existe como supergrupo
             res["dup"] += 1
             continue
         try:
             cm = await _retry(bot.get_chat_member, gid, me)
             if cm.status in (ChatMemberStatus.LEFT, ChatMemberStatus.BANNED):
-                await adb.delete_group(gid)
+                await _borrar(gid)
                 res["invalidos"] += 1
             else:
                 chat = await _retry(bot.get_chat, gid)
                 if chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
-                    await adb.delete_group(gid)
+                    await _borrar(gid)
                     res["invalidos"] += 1
                 else:
                     can = not (cm.status == ChatMemberStatus.RESTRICTED and not getattr(cm, "can_send_messages", True))
+                    await adb.ensure_group(gid, chat.title or str(gid))
                     await adb.update_group(gid, chat.title or str(gid), 1 if can else 0)
                     if not can:
                         res["inactivos"] += 1
         except ChatMigrated as e:
-            await adb.delete_group(gid)
+            await _borrar(gid)
             await adb.ensure_group(e.new_chat_id, "")
             idset.add(e.new_chat_id)
             res["dup"] += 1
         except Forbidden:
-            await adb.delete_group(gid)
+            await _borrar(gid)
             res["invalidos"] += 1
         except BadRequest as e:
             if any(k in str(e).lower() for k in _BAD):
-                await adb.delete_group(gid)
+                await _borrar(gid)
                 res["invalidos"] += 1
             else:
                 res["sin_verificar"] += 1
@@ -378,17 +401,23 @@ async def depurar_grupos(bot, adb: AnunciosDB) -> dict[str, int]:
             res["sin_verificar"] += 1
         await asyncio.sleep(PAUSE_BETWEEN_GROUPS)
     res["quedan"] = (await adb.group_counts())["total"]
+    if main_db is not None:
+        try:
+            res["quedan_menu"] = len(await main_db.get_known_groups())
+        except Exception:
+            pass
     return res
 
 
 async def _purge_and_report(app: Application, chat_id: int, msg_id: int) -> None:
     global _purging
     try:
-        r = await depurar_grupos(app.bot, _adb(app))
+        r = await depurar_grupos(app.bot, _adb(app), app.bot_data.get("db"))
         text = (f"🧹 <b>Depuración terminada</b>\nRevisados: {r['revisados']}\n"
                 f"Duplicados eliminados: {r['dup']}\nIds inválidos/inexistentes eliminados: {r['invalidos']}\n"
                 f"Sin poder escribir (inactivos): {r['inactivos']}\nNo verificados (error temporal): {r['sin_verificar']}\n"
-                f"<b>Grupos que quedan: {r['quedan']}</b>")
+                f"<b>Grupos que quedan: {r['quedan']}</b>"
+                + (f"\nLista de /grupos, /menu y broadcast: {r['quedan_menu']}" if r["quedan_menu"] >= 0 else ""))
     except Exception:
         logger.exception("Error depurando grupos")
         text = "⚠️ Ocurrió un error durante la depuración. Revisa los logs."
@@ -510,7 +539,14 @@ async def scr_list(adb: AnunciosDB, page: int):
     rows_db = await adb.list_anuncios(page * PAGE_ANN, PAGE_ANN)
     t = "📣 <b>Anuncios</b> (✅ activo / ⬜ inactivo)\nToca el nombre para configurarlo."
     if not rows_db:
-        t += "\n\nTodavía no hay anuncios. Publica algo en el canal."
+        t += "\n\nTodavía no hay anuncios. Publica algo NUEVO en el canal (con el bot como admin)."
+        t += f"\n\nCanal configurado: <code>{CHANNEL_ID or 'NO CONFIGURADO'}</code>"
+        fc = await adb.get_setting("foreign_chan", "")
+        if fc:
+            cid, _, ctitle = fc.partition("|")
+            if cid != str(CHANNEL_ID):
+                t += (f"\n⚠️ El bot recibió una publicación del canal «{h(ctitle)}» con ID "
+                      f"<code>{h(cid)}</code>, que NO coincide. Pon ese ID en ANUNCIOS_CHANNEL_ID y reinicia.")
     rows = [[
         Btn(chk(a["active"]), callback_data=f"an:ta:{a['id']}:{page}"),
         Btn(f"#{a['id']} {a['tipo']} · {short(a['preview'], 22)}", callback_data=f"an:a:{a['id']}"),
@@ -1081,11 +1117,7 @@ async def close_anuncios(application: Application) -> None:
 
 def register_anuncios_handlers(application: Application) -> None:
     """Grupos -30/-19/-18/-17: corren ANTES del resto y no cortan la propagación."""
-    if CHANNEL_ID:
-        application.add_handler(
-            MessageHandler(filters.UpdateType.CHANNEL_POSTS & filters.Chat(chat_id=CHANNEL_ID), on_channel_post),
-            group=-30,
-        )
+    application.add_handler(MessageHandler(filters.UpdateType.CHANNEL_POSTS, on_channel_post), group=-30)
     application.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER), group=-30)
     application.add_handler(
         MessageHandler(filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL & ~filters.COMMAND, contar_mensajes),
