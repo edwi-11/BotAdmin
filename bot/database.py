@@ -6,6 +6,7 @@ Crea automáticamente las tablas necesarias al iniciar.
 from __future__ import annotations
 
 import logging
+import sqlite3
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -554,6 +555,45 @@ CREATE TABLE IF NOT EXISTS votacion_choices (
     PRIMARY KEY (votacion_id, voter_id, username)
 );
 CREATE INDEX IF NOT EXISTS idx_votacion_choices ON votacion_choices (votacion_id, username);
+
+-- CEO Cleaner (limpieza automática de grupos, ver handlers/auto_cleaner.py y ceo_cleaner/)
+CREATE TABLE IF NOT EXISTS cleaner_config (
+    group_id          INTEGER PRIMARY KEY,
+    enabled           INTEGER NOT NULL DEFAULT 0,
+    start_hour        INTEGER NOT NULL DEFAULT 3,
+    start_minute      INTEGER NOT NULL DEFAULT 0,
+    interval_minutes  INTEGER NOT NULL DEFAULT 1440,
+    timezone          TEXT NOT NULL DEFAULT 'America/Managua',
+    next_run_at       INTEGER,          -- epoch UTC de la próxima limpieza
+    last_run_at       INTEGER,
+    last_status       TEXT,
+    last_cleaned_id   INTEGER,          -- último message_id ya limpiado
+    updated_by        INTEGER,
+    updated_at        INTEGER NOT NULL
+);
+-- Primer message_id visto por hora en cada grupo (solo punto de partida de la primera limpieza).
+CREATE TABLE IF NOT EXISTS cleaner_marks (
+    chat_id        INTEGER NOT NULL,
+    bucket         INTEGER NOT NULL,
+    min_message_id INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, bucket)
+);
+-- Cola CEO -> CEO Cleaner; también sirve de registro de ejecuciones y errores.
+CREATE TABLE IF NOT EXISTS cleaner_jobs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id      INTEGER NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'pending',  -- pending | running | done | failed | cancelled
+    nonce         TEXT NOT NULL,
+    signature     TEXT NOT NULL,
+    requested_at  INTEGER NOT NULL,
+    started_at    INTEGER,
+    finished_at   INTEGER,
+    error         TEXT
+);
+-- Una sola limpieza activa por grupo.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cleaner_jobs_active
+    ON cleaner_jobs (group_id) WHERE status IN ('pending', 'running');
+CREATE INDEX IF NOT EXISTS idx_cleaner_jobs_status ON cleaner_jobs (status, requested_at);
 """
 
 # Columnas que se añadieron después de la primera versión del esquema.
@@ -929,6 +969,41 @@ def _row_to_report(row: aiosqlite.Row) -> Report:
         message_id=row["message_id"], message_link=row["message_link"],
         reason=row["reason"], source=row["source"], status=row["status"],
         created_at=row["created_at"], resolved_by=row["resolved_by"], resolved_at=row["resolved_at"],
+    )
+
+
+@dataclass(slots=True)
+class CleanerConfig:
+    group_id: int
+    enabled: bool = False
+    start_hour: int = 3
+    start_minute: int = 0
+    interval_minutes: int = 1440
+    timezone: str = "America/Managua"
+    next_run_at: Optional[int] = None
+    last_run_at: Optional[int] = None
+    last_status: Optional[str] = None
+    last_cleaned_id: Optional[int] = None
+    updated_by: Optional[int] = None
+
+
+@dataclass(slots=True)
+class CleanerJob:
+    id: int
+    group_id: int
+    nonce: str
+    signature: str
+    requested_at: int
+
+
+def _row_to_cleaner_config(row) -> CleanerConfig:
+    return CleanerConfig(
+        group_id=row["group_id"], enabled=bool(row["enabled"]),
+        start_hour=row["start_hour"], start_minute=row["start_minute"],
+        interval_minutes=row["interval_minutes"], timezone=row["timezone"] or "America/Managua",
+        next_run_at=row["next_run_at"], last_run_at=row["last_run_at"],
+        last_status=row["last_status"], last_cleaned_id=row["last_cleaned_id"],
+        updated_by=row["updated_by"],
     )
 
 
@@ -2457,6 +2532,133 @@ class Database:
             (int(time.time()), sent_count, failed_count, broadcast_id),
         )
         await self.conn.commit()
+
+    # ------------------------------------------------------------------ #
+    # CEO Cleaner: limpieza automática (handlers/auto_cleaner.py y ceo_cleaner/)
+    # ------------------------------------------------------------------ #
+    _CLEANER_COLUMNS = {
+        "enabled", "start_hour", "start_minute", "interval_minutes", "timezone",
+        "next_run_at", "last_run_at", "last_status", "last_cleaned_id", "updated_by",
+    }
+
+    async def get_cleaner_config(self, group_id: int, default_tz: str = "America/Managua") -> CleanerConfig:
+        cursor = await self.conn.execute("SELECT * FROM cleaner_config WHERE group_id = ?", (group_id,))
+        row = await cursor.fetchone()
+        if row is None:
+            return CleanerConfig(group_id=group_id, timezone=default_tz)
+        return _row_to_cleaner_config(row)
+
+    async def update_cleaner_config(self, group_id: int, default_tz: str = "America/Managua", **fields) -> None:
+        bad = set(fields) - self._CLEANER_COLUMNS
+        if bad:
+            raise ValueError(f"Columnas de cleaner_config no permitidas: {sorted(bad)}")
+        now = int(time.time())
+        await self.conn.execute(
+            "INSERT INTO cleaner_config (group_id, timezone, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(group_id) DO NOTHING",
+            (group_id, default_tz, now),
+        )
+        if fields:
+            sets = ", ".join(f"{col} = ?" for col in fields)
+            await self.conn.execute(
+                f"UPDATE cleaner_config SET {sets}, updated_at = ? WHERE group_id = ?",
+                (*fields.values(), now, group_id),
+            )
+        await self.conn.commit()
+
+    async def get_enabled_cleaner_configs(self) -> list[CleanerConfig]:
+        cursor = await self.conn.execute("SELECT * FROM cleaner_config WHERE enabled = 1")
+        return [_row_to_cleaner_config(r) for r in await cursor.fetchall()]
+
+    async def get_due_cleaner_configs(self, now: int) -> list[CleanerConfig]:
+        cursor = await self.conn.execute(
+            "SELECT * FROM cleaner_config WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ? "
+            "ORDER BY next_run_at",
+            (now,),
+        )
+        return [_row_to_cleaner_config(r) for r in await cursor.fetchall()]
+
+    async def touch_cleaner_mark(self, chat_id: int, bucket: int, message_id: int) -> None:
+        await self.conn.execute(
+            "INSERT INTO cleaner_marks (chat_id, bucket, min_message_id) VALUES (?, ?, ?) "
+            "ON CONFLICT(chat_id, bucket) DO UPDATE SET "
+            "min_message_id = MIN(min_message_id, excluded.min_message_id)",
+            (chat_id, bucket, message_id),
+        )
+        await self.conn.commit()
+
+    async def get_cleaner_min_mark(self, chat_id: int) -> Optional[int]:
+        cursor = await self.conn.execute(
+            "SELECT MIN(min_message_id) AS m FROM cleaner_marks WHERE chat_id = ?", (chat_id,)
+        )
+        row = await cursor.fetchone()
+        return row["m"] if row and row["m"] is not None else None
+
+    async def clear_cleaner_marks(self, chat_id: int) -> None:
+        await self.conn.execute("DELETE FROM cleaner_marks WHERE chat_id = ?", (chat_id,))
+        await self.conn.commit()
+
+    async def create_cleaner_job(self, group_id: int, nonce: str, signature: str, requested_at: int) -> Optional[int]:
+        """None si ya hay una limpieza pendiente/en curso en ese grupo."""
+        try:
+            cursor = await self.conn.execute(
+                "INSERT INTO cleaner_jobs (group_id, status, nonce, signature, requested_at) "
+                "VALUES (?, 'pending', ?, ?, ?)",
+                (group_id, nonce, signature, requested_at),
+            )
+            await self.conn.commit()
+            return cursor.lastrowid
+        except sqlite3.IntegrityError:
+            await self.conn.rollback()
+            return None
+
+    async def claim_cleaner_job(self) -> Optional[CleanerJob]:
+        cursor = await self.conn.execute(
+            "SELECT * FROM cleaner_jobs WHERE status = 'pending' ORDER BY id LIMIT 1"
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        cursor = await self.conn.execute(
+            "UPDATE cleaner_jobs SET status = 'running', started_at = ? WHERE id = ? AND status = 'pending'",
+            (int(time.time()), row["id"]),
+        )
+        await self.conn.commit()
+        if cursor.rowcount != 1:
+            return None
+        return CleanerJob(
+            id=row["id"], group_id=row["group_id"], nonce=row["nonce"],
+            signature=row["signature"], requested_at=row["requested_at"],
+        )
+
+    async def finish_cleaner_job(self, job_id: int, status: str, error: Optional[str] = None) -> None:
+        await self.conn.execute(
+            "UPDATE cleaner_jobs SET status = ?, finished_at = ?, error = ? WHERE id = ?",
+            (status, int(time.time()), (error or None), job_id),
+        )
+        await self.conn.commit()
+
+    async def expire_cleaner_jobs(self, pending_ttl: int, running_ttl: int) -> int:
+        """Cancela trabajos que nadie tomó a tiempo, marca como fallidos los
+        interrumpidos y borra el registro de trabajos terminados hace más de 90 días."""
+        now = int(time.time())
+        c1 = await self.conn.execute(
+            "UPDATE cleaner_jobs SET status = 'cancelled', finished_at = ?, "
+            "error = 'expirada: CEO Cleaner no la tomó a tiempo' "
+            "WHERE status = 'pending' AND requested_at <= ?",
+            (now, now - pending_ttl),
+        )
+        c2 = await self.conn.execute(
+            "UPDATE cleaner_jobs SET status = 'failed', finished_at = ?, error = 'interrumpida' "
+            "WHERE status = 'running' AND started_at <= ?",
+            (now, now - running_ttl),
+        )
+        await self.conn.execute(
+            "DELETE FROM cleaner_jobs WHERE status NOT IN ('pending', 'running') AND finished_at < ?",
+            (now - 90 * 86400,),
+        )
+        await self.conn.commit()
+        return (c1.rowcount or 0) + (c2.rowcount or 0)
 
     # ------------------------------------------------------------------ #
     # Mensajes secretos (modo en línea, estilo @mensajesecretobot)

@@ -1,0 +1,40 @@
+CEO Cleaner — Eliminación automática
+====================================
+
+1) Crea un bot nuevo en @BotFather (token distinto al de CEO) y agrégalo a
+   cada grupo como ADMINISTRADOR con el permiso «Eliminar mensajes».
+   Se queda en el grupo de forma permanente.
+
+2) Agrega a tu .env (NO subas el .env a ningún lado):
+
+   CLEANER_BOT_TOKEN=token_del_bot_cleaner
+   CLEANER_SHARED_SECRET=una_clave_larga_y_aleatoria
+   # Opcionales:
+   # CLEANER_BOT_ID=123456789        (si CEO no debe tener el token: solo el ID)
+   # CLEANER_TIMEZONE=America/Managua
+
+   Clave aleatoria:  python -c "import secrets; print(secrets.token_hex(32))"
+   CEO y CEO Cleaner deben usar el MISMO CLEANER_SHARED_SECRET.
+
+3) Arranca los dos procesos (misma carpeta, misma base de datos):
+
+   python main.py          # CEO (menú + scheduler)
+   python cleaner_bot.py   # CEO Cleaner (ejecuta)
+
+   Servicio systemd aparte para CEO Cleaner, igual que el de CEO, con
+   ExecStart=... cleaner_bot.py. Logs: logs/cleaner.log (cada línea lleva
+   [grupo=<id> job=<id>]). El historial de ejecuciones y errores queda en
+   la tabla cleaner_jobs.
+
+4) En el grupo: /menu → 🧹 Eliminación automática.
+
+Notas
+- Primera limpieza: parte del primer mensaje visto después de activar la
+  función (Telegram no deja leer el historial). Las siguientes parten de
+  donde terminó la anterior.
+- Se respeta lo que Telegram permite borrar; el mensaje fijado se conserva.
+- Si CEO Cleaner no está o no tiene permiso, CEO cancela la limpieza y avisa
+  por privado al administrador que configuró la función (o en el grupo).
+- Si CEO estuvo apagado y se pasó la hora por más de 2 h (o la mitad de la
+  frecuencia si es menor), esa limpieza se omite y se espera la siguiente.
+- database.py solo agrega tablas nuevas; no reemplaces database/bot.db.

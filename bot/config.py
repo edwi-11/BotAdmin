@@ -39,6 +39,11 @@ class Settings:
     del_notice_seconds: int
     logs_dir: Path = field(default_factory=lambda: BASE_DIR / "logs")
     broadcast_bot_token: str = ""  # Token del bot anunciador (opcional, ver broadcast_bot.py)
+    # --- CEO Cleaner (limpieza automática, ver cleaner_bot.py y LEEME_CEO_CLEANER.txt) ---
+    cleaner_bot_token: str = ""    # Token propio de CEO Cleaner (solo lo necesita su proceso)
+    cleaner_bot_id_raw: str = ""   # Opcional: ID numérico del bot (si no, se deduce del token)
+    cleaner_secret: str = ""       # Secreto compartido CEO <-> CEO Cleaner (firma HMAC de los trabajos)
+    cleaner_timezone: str = "America/Managua"
     gemini_api_key: str = ""       # API key de Google AI Studio (opcional, ver handlers/gemini_chat.py)
     gemini_model: str = "gemini-flash-latest"
     gemini_tts_model: str = "gemini-2.5-flash-preview-tts"
@@ -55,6 +60,12 @@ class Settings:
     sticker_brb_back: str = ""  # Al volver de BRB/AFK
     sticker_del: str = ""
     sticker_completado: str = ""  # Genérico: se manda al terminar OK una acción sin sticker propio
+
+    @property
+    def cleaner_bot_id(self) -> int | None:
+        """ID del bot CEO Cleaner (para que CEO verifique que está en el grupo)."""
+        raw = self.cleaner_bot_id_raw or self.cleaner_bot_token.split(":", 1)[0]
+        return int(raw) if raw.strip().isdigit() else None
 
     def validate(self) -> None:
         if not self.bot_token or ":" not in self.bot_token:
@@ -82,6 +93,10 @@ def load_settings() -> Settings:
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         del_notice_seconds=int(os.getenv("DEL_NOTICE_SECONDS", "10")),
         broadcast_bot_token=os.getenv("BROADCAST_BOT_TOKEN", "").strip(),
+        cleaner_bot_token=os.getenv("CLEANER_BOT_TOKEN", "").strip(),
+        cleaner_bot_id_raw=os.getenv("CLEANER_BOT_ID", "").strip(),
+        cleaner_secret=os.getenv("CLEANER_SHARED_SECRET", "").strip(),
+        cleaner_timezone=os.getenv("CLEANER_TIMEZONE", "America/Managua").strip() or "America/Managua",
         gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-flash-latest").strip(),
         gemini_tts_model=os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts").strip(),

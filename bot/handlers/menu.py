@@ -121,6 +121,9 @@ def build_main_menu(group_id: int, is_private: bool) -> InlineKeyboardMarkup:
             InlineKeyboardButton("🧹 Auto-eliminar", callback_data=f"c:menu:{group_id}"),
         ],
         [
+            InlineKeyboardButton("🧹 Eliminación automática", callback_data=f"cl:menu:{group_id}"),
+        ],
+        [
             InlineKeyboardButton("❗ Advertencias", callback_data=f"aw:menu:{group_id}"),
             InlineKeyboardButton("🔞 Captcha", callback_data=f"cap:menu:{group_id}"),
         ],

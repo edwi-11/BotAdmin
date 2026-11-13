@@ -57,6 +57,11 @@ from handlers.captcha import (
     try_consume_captcha_answer,
     try_consume_captcha_log_forward,
 )
+from handlers.auto_cleaner import (
+    auto_cleaner_callback,
+    schedule_auto_cleaner,
+    track_cleaner_marks,
+)
 from handlers.cleanup import (
     cleanup_menu_callback,
     on_call_started_cleanup,
@@ -430,6 +435,7 @@ async def post_init(application: Application) -> None:
     schedule_activity_resets(application)
     schedule_weekly_summary(application)
     schedule_votaciones(application)
+    await schedule_auto_cleaner(application, db)
     await init_anuncios(application)
     logger.info("Bot inicializado correctamente. Propietarios: %s", list(settings.owner_ids))
 
@@ -538,7 +544,6 @@ def build_application() -> Application:
     application = (
         ApplicationBuilder()
         .token(settings.bot_token)
-        .concurrent_updates(True)
         .defaults(
             # allow_sending_without_reply=True: si un handler responde a un
             # mensaje que ya no existe en ESE chat (se borró, o — como en
@@ -605,6 +610,12 @@ def build_application() -> Application:
     application.add_handler(
         MessageHandler(filters.ChatType.GROUPS & ~filters.StatusUpdate.ALL, track_activity), group=-7
     )
+    # --- Eliminación automática (CEO Cleaner): marca el primer message_id de cada
+    # hora en los grupos con la función activa. Grupo propio (-8): no pisa a nadie
+    # ni corta la propagación del update. ---
+    application.add_handler(
+        MessageHandler(filters.ChatType.GROUPS, track_cleaner_marks), group=-8
+    )
     application.add_handler(ChatMemberHandler(on_bot_membership_change, ChatMemberHandler.MY_CHAT_MEMBER))
     # Antiraid: necesita ver TODOS los cambios de miembros (no solo los del
     # propio bot) para poder detectar expulsiones masivas y atribuirlas.
@@ -620,6 +631,7 @@ def build_application() -> Application:
     application.add_handler(CallbackQueryHandler(recurring_callback, pattern=r"^r:"))
     application.add_handler(CallbackQueryHandler(words_menu_callback, pattern=r"^w:"))
     application.add_handler(CallbackQueryHandler(cleanup_menu_callback, pattern=r"^c:"))
+    application.add_handler(CallbackQueryHandler(auto_cleaner_callback, pattern=r"^cl:"))
     application.add_handler(CallbackQueryHandler(warnings_callback, pattern=r"^aw:"))
     application.add_handler(CallbackQueryHandler(xmod_menu_callback, pattern=r"^xm:"))
 
@@ -807,7 +819,7 @@ def build_application() -> Application:
     # --- Integración con Gemini: mensajes que empiezan con "ceo" (cualquier
     # combinación de mayúsc/minúsc), solo en grupos activados ---
     application.add_handler(
-        MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, ceo_trigger, block=False),
+        MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, ceo_trigger),
         group=2,
     )
 
