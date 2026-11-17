@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from itertools import zip_longest
 from typing import Awaitable, Callable
 
@@ -22,6 +23,10 @@ logger = logging.getLogger(__name__)
 PER_PROVIDER_LIMIT = 10                    # Resultados pedidos a cada proveedor
 MAX_PARALLEL_DOWNLOADS = 3
 MAX_AUDIO_BYTES = 48 * 1024 * 1024         # Telegram permite subir hasta 50 MB como bot
+INLINE_MAX_RESULTS = 20
+INLINE_CACHE_TTL = 120                     # Segundos que se reutiliza una búsqueda inline igual
+INLINE_CACHE_MAX = 100
+INLINE_RESOLVE_TIMEOUT = 6.0               # Segundos máximos para resolver la URL de cada audio
 
 
 class MusicService:
@@ -39,6 +44,7 @@ class MusicService:
         if settings.jamendo_enabled:
             self.providers["jamendo"] = JamendoProvider(self._client, settings.jamendo_client_id)
         self._slots = asyncio.Semaphore(MAX_PARALLEL_DOWNLOADS)
+        self._inline_cache: dict[str, tuple[float, list[tuple[Track, str]]]] = {}
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -80,6 +86,32 @@ class MusicService:
 
     async def trending(self, provider: str | None = None) -> list[Track]:
         return await self._collect(lambda p: p.trending(PER_PROVIDER_LIMIT), provider)
+
+    async def inline_tracks(self, query: str) -> list[tuple[Track, str]]:
+        """Canciones para el modo inline (@bot texto): pares (Track, URL directa de audio).
+        Sin texto devuelve las tendencias. Reutiliza resultados recientes de la misma consulta."""
+        key = query.lower()
+        now = time.monotonic()
+        cached = self._inline_cache.get(key)
+        if cached and now - cached[0] < INLINE_CACHE_TTL:
+            return cached[1]
+
+        tracks = await (self.search(query) if query else self.trending())
+        tracks = tracks[:INLINE_MAX_RESULTS]
+
+        async def resolve(track: Track) -> tuple[Track, str] | None:
+            provider = self.providers[track.provider]
+            try:
+                return track, await asyncio.wait_for(provider.audio_url(track), INLINE_RESOLVE_TIMEOUT)
+            except Exception as exc:  # una pista que falle no debe tumbar todo el listado
+                logger.warning("[%s] inline: sin URL de audio (%s)", track.provider, type(exc).__name__)
+                return None
+
+        items = [r for r in await asyncio.gather(*(resolve(t) for t in tracks)) if r is not None]
+        self._inline_cache[key] = (now, items)
+        while len(self._inline_cache) > INLINE_CACHE_MAX:
+            self._inline_cache.pop(next(iter(self._inline_cache)))
+        return items
 
     async def download(self, track: Track) -> bytes:
         provider = self.providers.get(track.provider)

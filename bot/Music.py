@@ -101,7 +101,7 @@ def main() -> None:
     application.add_error_handler(error_handler)
 
     logger.info("Iniciando CEO Music en modo polling (fuentes: %s)...", ", ".join(provider_names))
-    application.run_polling(allowed_updates=["message", "callback_query"], drop_pending_updates=True)
+    application.run_polling(allowed_updates=["message", "callback_query", "inline_query"], drop_pending_updates=True)
 
 
 if __name__ == "__main__":

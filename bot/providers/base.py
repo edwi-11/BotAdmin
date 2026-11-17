@@ -56,6 +56,10 @@ class MusicProvider(ABC):
     def _auth_params(self) -> dict[str, str]:
         return {}
 
+    async def audio_url(self, track: Track) -> str:
+        """URL directa de audio que Telegram pueda descargar por sí mismo (modo inline)."""
+        return track.stream_url
+
     # --- Utilidades HTTP comunes ---
     async def _get_json(self, url: str, params: dict | None = None) -> dict:
         """GET que devuelve JSON. Convierte cualquier fallo en ProviderError sin

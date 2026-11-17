@@ -4,6 +4,7 @@ Handlers de CEO Music (bot independiente, ver Music.py).
 
 Comandos: /start /help /buscar /tendencias /audius /jamendo
 En chat privado también se puede escribir directamente el nombre de la canción.
+Modo inline: «@bot nombre» en cualquier chat (requiere /setinline en @BotFather).
 """
 from __future__ import annotations
 
@@ -17,10 +18,24 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from math import ceil
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyParameters, Update
-from telegram.constants import ChatAction
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InlineQueryResultAudio,
+    ReplyParameters,
+    Update,
+)
+from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest, TelegramError
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    InlineQueryHandler,
+    MessageHandler,
+    filters,
+)
 
 from providers.base import ProviderError, Track
 from services.music_service import MusicService
@@ -98,7 +113,7 @@ def _render(service: MusicService, token: str, session: SearchSession, page: int
     return "\n".join(lines), InlineKeyboardMarkup(rows)
 
 
-def _help_text(service: MusicService) -> str:
+def _help_text(service: MusicService, bot_username: str | None = None) -> str:
     sources = ", ".join(p.label for p in service.providers.values())
     lines = [
         "🎧 <b>CEO Music</b>",
@@ -110,6 +125,12 @@ def _help_text(service: MusicService) -> str:
     for provider in service.providers.values():
         lines.append(f"<code>/{provider.name}</code> <i>texto</i> — buscar solo en {esc(provider.label)}")
     lines += ["", "En chat privado también puedes escribir directamente el nombre de la canción."]
+    if bot_username:
+        lines += [
+            "",
+            f"💡 En cualquier chat escribe <code>@{esc(bot_username)} despacito</code>, "
+            "elige una canción de la lista y se envía al instante.",
+        ]
     return "\n".join(lines)
 
 
@@ -130,7 +151,7 @@ def _caption(service: MusicService, track: Track) -> str:
 # ------------------------------------------------------------------- comandos
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_message:
-        await update.effective_message.reply_text(_help_text(_service(context)))
+        await update.effective_message.reply_text(_help_text(_service(context), context.bot.username))
 
 
 async def _run_search(
@@ -208,6 +229,45 @@ async def text_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     """Chat privado: cualquier texto que no sea comando se busca como canción."""
     if update.effective_message and update.effective_message.text:
         await _run_search(update, context, query=update.effective_message.text)
+
+
+# ---------------------------------------------------------------- modo inline
+async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """@bot texto → lista de canciones sobre la barra de mensajes; al elegir una se envía
+    como audio «vía @bot». Sin texto muestra las tendencias."""
+    iq = update.inline_query
+    if iq is None:
+        return
+    text = " ".join(iq.query.split())[:MAX_QUERY_LEN]
+    if len(text) == 1:  # Una sola letra daría resultados poco útiles y gasta cuota de las APIs
+        await iq.answer([], cache_time=1)
+        return
+
+    service = _service(context)
+    try:
+        items = await service.inline_tracks(text)
+    except ProviderError as exc:
+        logger.warning("Consulta inline fallida: %s", exc)
+        await iq.answer([], cache_time=5)
+        return
+    except Exception:
+        logger.exception("Fallo inesperado en consulta inline")
+        await iq.answer([], cache_time=5)
+        return
+
+    results = [
+        InlineQueryResultAudio(
+            id=f"{track.provider}:{track.track_id}"[:64],
+            audio_url=url,
+            title=track.title[:64],
+            performer=track.artist[:64],
+            audio_duration=track.duration or None,
+            caption=_caption(service, track),
+            parse_mode=ParseMode.HTML,
+        )
+        for track, url in items
+    ]
+    await iq.answer(results, cache_time=300, is_personal=False)
 
 
 # ------------------------------------------------------------------- botones
@@ -296,5 +356,6 @@ def register_music_handlers(application: Application, provider_names: list[str])
     application.add_handler(CommandHandler("tendencias", tendencias_command))
     for name in provider_names:
         application.add_handler(CommandHandler(name, _provider_command(name)))
+    application.add_handler(InlineQueryHandler(inline_query))
     application.add_handler(CallbackQueryHandler(music_callback, pattern=rf"^{CALLBACK_PREFIX}:"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, text_search))

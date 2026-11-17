@@ -60,6 +60,26 @@ class AudiusProvider(MusicProvider):
     async def trending(self, limit: int) -> list[Track]:
         return await self._tracks("/tracks/trending", {"time": "week", "limit": limit})
 
+    async def audio_url(self, track: Track) -> str:
+        """El endpoint /stream de Audius responde con una redirección al nodo que aloja el mp3.
+        Se pide con las credenciales (sin seguirla) y se devuelve la URL final, que Telegram
+        puede descargar sin cabeceras de autenticación."""
+        try:
+            async with self._client.stream(
+                "GET",
+                track.stream_url,
+                params=self._auth_params(),
+                headers=self._auth_headers(),
+                follow_redirects=False,
+            ) as resp:
+                location = resp.headers.get("location", "")
+                if resp.status_code in (301, 302, 303, 307, 308) and location.startswith("http"):
+                    return location
+                status = resp.status_code
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"No pude obtener el audio de Audius ({type(exc).__name__}).") from None
+        raise ProviderError(f"Audius no devolvió un enlace de audio (HTTP {status}).")
+
     @staticmethod
     def _parse(raw: object) -> Track | None:
         if not isinstance(raw, dict):
